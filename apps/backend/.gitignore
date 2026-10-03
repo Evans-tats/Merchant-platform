@@ -24,3 +24,5 @@ build
 !.yarn/versions
 
 .medusa
+# Photos and drafts from npm run draft:photo-test
+/test-photos

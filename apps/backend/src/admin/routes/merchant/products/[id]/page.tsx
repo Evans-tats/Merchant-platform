@@ -25,10 +25,12 @@ import {
   formatMoney,
   merchantApi,
   merchantQueryKeys,
+  type MerchantCategoryListResponse,
   type MerchantDeliverySettings,
   type MerchantProduct,
   type MerchantSession,
 } from "../../../../lib/merchant-api"
+import { categoryChoices } from "../../categories/category-form"
 import {
   GeneralEditDrawer,
   MediaEditDrawer,
@@ -92,12 +94,12 @@ const ProductDetailsContent = ({ session }: { session: MerchantSession }) => {
     queryKey: merchantQueryKeys.resource(session.merchant.id, "product-references"),
     queryFn: async (): Promise<ReferenceData> => {
       const [categories, collections, deliverySettings] = await Promise.all([
-        merchantApi.get<{ product_categories: ReferenceData["categories"] }>(session.merchant.id, "/categories"),
+        merchantApi.get<MerchantCategoryListResponse>(session.merchant.id, "/categories"),
         merchantApi.get<{ collections: ReferenceData["collections"] }>(session.merchant.id, "/collections"),
         merchantApi.get<MerchantDeliverySettings>(session.merchant.id, "/delivery-options"),
       ])
       return {
-        categories: categories.product_categories,
+        categories: categoryChoices(categories.product_categories),
         collections: collections.collections,
         shippingProfiles: deliverySettings.shipping_profiles,
         regions: deliverySettings.regions,

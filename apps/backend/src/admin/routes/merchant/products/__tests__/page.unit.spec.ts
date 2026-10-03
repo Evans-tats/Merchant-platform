@@ -26,6 +26,36 @@ describe("merchant product management regression", () => {
     expect(source).not.toContain("sdk.admin.upload")
   })
 
+  it("drafts details from a photo without overwriting the merchant's input", () => {
+    const source = readFileSync(
+      resolve(__dirname, "../product-create-modal.tsx"),
+      "utf8"
+    )
+    const apiClient = readFileSync(
+      resolve(__dirname, "../../../../lib/merchant-api.ts"),
+      "utf8"
+    )
+
+    // Drafts from every photo (thumbnail first) and redrafts only while the
+    // drafted text is untouched.
+    expect(source).toContain("draftFromPhotos.mutate(draftPhotos)")
+    expect(source).toContain("selectDraftPhotos(nextMedia)")
+    expect(source).toContain("draftTextUntouched && addsDraftPhotos")
+    expect(source).toContain("if (!title.trim() || title === draftedTitle)")
+    expect(source).toContain("Update from all photos")
+    expect(source).toContain("photoDraftsEnabled && mediaFiles.length > 0")
+    expect(source).toContain("Use these options")
+    expect(source).toContain(".slice(0, 3)")
+    expect(source).toContain("resizeImageForDraft(file)")
+    expect(source).toContain("description_source:")
+    // Each variant can show its own photos on the storefront.
+    expect(source).toContain("Photos for this variant")
+    expect(source).toContain("image_urls: imageUrls")
+    expect(source).toContain("suggestImageKeys(combination, photoLinks)")
+    expect(apiClient).toContain("`/admin/merchants/${merchantId}/product-drafts`")
+    expect(apiClient).toContain('body.append("photos", photo)')
+  })
+
   it("loads the catalog with server-side pagination and filters", () => {
     const source = readFileSync(resolve(__dirname, "../page.tsx"), "utf8")
 

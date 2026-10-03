@@ -12,7 +12,9 @@ import {
 } from "@medusajs/ui"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { FormEvent, useState } from "react"
+import { Link } from "react-router-dom"
 
+import { FieldError } from "../../../components/merchant/form-field"
 import {
   MerchantEmptyState,
   MerchantPageHeader,
@@ -23,112 +25,140 @@ import {
   errorMessage,
   merchantApi,
   merchantQueryKeys,
+  type MerchantCategoryListResponse,
+  type MerchantCollectionListResponse,
   type MerchantSession,
 } from "../../../lib/merchant-api"
-
-type Category = {
-  id: string
-  name: string
-  handle: string
-  description?: string | null
-  parent_category_id?: string | null
-}
-
-type Collection = {
-  id: string
-  title: string
-  handle: string
-}
+import { CategoryStatusBadges } from "../categories/category-badges"
+import { categoryQueryKeys } from "../categories/category-queries"
+import { CreateCategoryModal } from "../categories/create-category-modal"
+import { collectionQueryKeys } from "../collections/collection-queries"
+import { CreateCollectionModal } from "../collections/create-collection-modal"
 
 type ShippingProfile = { id: string; name: string; type: string }
 
-type CatalogKind = "category" | "collection" | "shipping"
-export type MerchantCatalogSection = "all" | "categories" | "collections"
+type ShippingProfileFormValues = {
+  name: string
+  type: string
+}
 
-const CreateCatalogDrawer = ({
-  kind,
+type ShippingProfileFormErrors = Partial<
+  Record<keyof ShippingProfileFormValues, string>
+>
+
+function readShippingProfileForm(
+  form: HTMLFormElement
+): ShippingProfileFormValues {
+  const data = new FormData(form)
+
+  return {
+    name: String(data.get("name") ?? "").trim(),
+    type: String(data.get("type") ?? "").trim(),
+  }
+}
+
+// Checked on submit so empty fields aren't flagged before anything is typed.
+function validateShippingProfileForm(
+  values: ShippingProfileFormValues
+): ShippingProfileFormErrors {
+  return {
+    ...(!values.name && { name: "Enter a name" }),
+    ...(!values.type && { type: "Enter a type" }),
+  }
+}
+
+const CreateShippingProfileDrawer = ({
+  open,
   session,
   onClose,
 }: {
-  kind: CatalogKind | null
+  open: boolean
   session: MerchantSession
   onClose: () => void
 }) => {
   const queryClient = useQueryClient()
-  const createEntry = useMutation({
-    mutationFn: (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault()
-      const form = new FormData(event.currentTarget)
-      const name = String(form.get("name") ?? "").trim()
-      const handle = String(form.get("handle") ?? "").trim()
-
-      return merchantApi.post(
-        session.merchant.id,
-        kind === "category"
-          ? "/categories"
-          : kind === "collection"
-            ? "/collections"
-            : "/shipping-profiles",
-        kind === "category"
-          ? {
-              product_categories: [{
-                name,
-                handle,
-                description:
-                  String(form.get("description") ?? "").trim() || undefined,
-                is_active: true,
-                is_internal: false,
-              }],
-            }
-          : kind === "collection"
-            ? { collections: [{ title: name, handle }] }
-            : { shipping_profiles: [{ name, type: String(form.get("type") ?? "default").trim() }] }
-      )
-    },
+  const [errors, setErrors] = useState<ShippingProfileFormErrors>({})
+  const close = () => {
+    setErrors({})
+    onClose()
+  }
+  const clearError = (field: keyof ShippingProfileFormValues) =>
+    setErrors((current) => ({ ...current, [field]: undefined }))
+  const createProfile = useMutation({
+    mutationFn: (values: ShippingProfileFormValues) =>
+      merchantApi.post(session.merchant.id, "/shipping-profiles", {
+        shipping_profiles: [values],
+      }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({
         queryKey: merchantQueryKeys.resource(
           session.merchant.id,
-          kind === "category"
-            ? "categories"
-            : kind === "collection"
-              ? "collections"
-              : "shipping-profiles"
+          "shipping-profiles"
         ),
       })
-      toast.success(`${kind === "category" ? "Category" : kind === "collection" ? "Collection" : "Shipping profile"} created`)
-      onClose()
+      toast.success("Shipping profile created")
+      close()
     },
     onError: (error) => toast.error(errorMessage(error)),
   })
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+
+    // Read the form now: the event is gone by the time the mutation runs.
+    const values = readShippingProfileForm(event.currentTarget)
+    const nextErrors = validateShippingProfileForm(values)
+
+    setErrors(nextErrors)
+
+    if (!Object.values(nextErrors).some(Boolean)) {
+      createProfile.mutate(values)
+    }
+  }
 
   return (
-    <Drawer open={Boolean(kind)} onOpenChange={(open) => !open && onClose()}>
+    <Drawer open={open} onOpenChange={(next) => !next && close()}>
       <Drawer.Content>
-        <form className="flex h-full flex-col" onSubmit={(event) => createEntry.mutate(event)}>
+        <form className="flex h-full flex-col" noValidate onSubmit={submit}>
           <Drawer.Header>
-            <Drawer.Title>Create {kind}</Drawer.Title>
+            <Drawer.Title>Create shipping profile</Drawer.Title>
             <Drawer.Description>
-              The entry will only be available to this merchant.
+              The profile will only be available to this merchant.
             </Drawer.Description>
           </Drawer.Header>
           <Drawer.Body className="flex flex-1 flex-col gap-y-4">
             <div className="flex flex-col gap-y-2">
-              <Label htmlFor="catalog-name">Name</Label>
-              <Input id="catalog-name" name="name" required />
+              <Label htmlFor="shipping-name" size="small" weight="plus">Name</Label>
+              <Input
+                id="shipping-name"
+                name="name"
+                aria-invalid={Boolean(errors.name)}
+                onChange={() => clearError("name")}
+              />
+              <FieldError message={errors.name} />
             </div>
-            {kind !== "shipping" && <div className="flex flex-col gap-y-2"><Label htmlFor="catalog-handle">Handle</Label><Input id="catalog-handle" name="handle" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" required /></div>}
-            {kind === "shipping" && <div className="flex flex-col gap-y-2"><Label htmlFor="shipping-type">Type</Label><Input id="shipping-type" name="type" defaultValue="default" required /></div>}
-            {kind === "category" && (
-              <div className="flex flex-col gap-y-2">
-                <Label htmlFor="catalog-description">Description</Label>
-                <Input id="catalog-description" name="description" />
-              </div>
-            )}
+            <div className="flex flex-col gap-y-2">
+              <Label htmlFor="shipping-type" size="small" weight="plus">Type</Label>
+              <Input
+                id="shipping-type"
+                name="type"
+                defaultValue="default"
+                aria-invalid={Boolean(errors.type)}
+                onChange={() => clearError("type")}
+              />
+              <FieldError message={errors.type} />
+            </div>
           </Drawer.Body>
           <Drawer.Footer>
-            <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-            <Button type="submit" isLoading={createEntry.isPending}>Create</Button>
+            <Button
+              size="small"
+              type="button"
+              variant="secondary"
+              disabled={createProfile.isPending}
+              onClick={close}
+            >
+              Cancel
+            </Button>
+            <Button size="small" type="submit" isLoading={createProfile.isPending}>Create</Button>
           </Drawer.Footer>
         </form>
       </Drawer.Content>
@@ -138,31 +168,27 @@ const CreateCatalogDrawer = ({
 
 export const MerchantCatalogContent = ({
   session,
-  section = "all",
 }: {
   session: MerchantSession
-  section?: MerchantCatalogSection
 }) => {
-  const [createKind, setCreateKind] = useState<CatalogKind | null>(null)
+  const [shippingOpen, setShippingOpen] = useState(false)
+  const [categoryOpen, setCategoryOpen] = useState(false)
+  const [collectionOpen, setCollectionOpen] = useState(false)
   const categoriesQuery = useQuery({
-    queryKey: merchantQueryKeys.resource(session.merchant.id, "categories"),
-    queryFn: async () => {
-      const response = await merchantApi.get<{ product_categories: Category[] }>(
+    queryKey: categoryQueryKeys.list(session.merchant.id),
+    queryFn: () =>
+      merchantApi.get<MerchantCategoryListResponse>(
         session.merchant.id,
         "/categories"
-      )
-      return response.product_categories
-    },
+      ),
   })
   const collectionsQuery = useQuery({
-    queryKey: merchantQueryKeys.resource(session.merchant.id, "collections"),
-    queryFn: async () => {
-      const response = await merchantApi.get<{ collections: Collection[] }>(
+    queryKey: collectionQueryKeys.list(session.merchant.id),
+    queryFn: () =>
+      merchantApi.get<MerchantCollectionListResponse>(
         session.merchant.id,
         "/collections"
-      )
-      return response.collections
-    },
+      ),
   })
   const shippingProfilesQuery = useQuery({
     queryKey: merchantQueryKeys.resource(session.merchant.id, "shipping-profiles"),
@@ -180,66 +206,70 @@ export const MerchantCatalogContent = ({
   if (shippingProfilesQuery.isError) throw shippingProfilesQuery.error
 
   const canEdit = canManageMerchant(session.member.role)
-  const categories = categoriesQuery.data ?? []
-  const collections = collectionsQuery.data ?? []
+  const categories = categoriesQuery.data?.product_categories ?? []
+  const collections = collectionsQuery.data?.collections ?? []
   const shippingProfiles = shippingProfilesQuery.data ?? []
-  const pageTitle = section === "categories"
-    ? "Categories"
-    : section === "collections"
-      ? "Collections"
-      : "Catalog organization"
-  const pageSubtitle = section === "categories"
-    ? "Organize this merchant's products into a clear hierarchy"
-    : section === "collections"
-      ? "Curate groups of products for this merchant's storefront"
-      : "Merchant-owned categories, collections, and shipping profiles"
 
   return (
     <>
       <div className="flex flex-col gap-y-3">
         <Container className="divide-y p-0">
           <MerchantPageHeader
-            title={pageTitle}
-            subtitle={pageSubtitle}
+            title="Catalog organization"
+            subtitle="Merchant-owned categories, collections, and shipping profiles"
           />
-          {(section === "all" || section === "categories") && (
-            <>
           <div className="flex items-center justify-between px-6 py-4">
             <Text weight="plus">Categories</Text>
-            {canEdit && <Button size="small" variant="secondary" onClick={() => setCreateKind("category")}><Plus />Create category</Button>}
+            {canEdit && <Button size="small" variant="secondary" onClick={() => setCategoryOpen(true)}><Plus />Create category</Button>}
           </div>
           {categories.length ? (
             <Table>
-              <Table.Header><Table.Row><Table.HeaderCell>Name</Table.HeaderCell><Table.HeaderCell>Handle</Table.HeaderCell><Table.HeaderCell>Description</Table.HeaderCell></Table.Row></Table.Header>
-              <Table.Body>{categories.map((category) => <Table.Row key={category.id}><Table.Cell>{category.name}</Table.Cell><Table.Cell>{category.handle}</Table.Cell><Table.Cell>{category.description || "-"}</Table.Cell></Table.Row>)}</Table.Body>
+              <Table.Header><Table.Row><Table.HeaderCell>Title</Table.HeaderCell><Table.HeaderCell>Handle</Table.HeaderCell><Table.HeaderCell>Status</Table.HeaderCell><Table.HeaderCell>Products</Table.HeaderCell></Table.Row></Table.Header>
+              <Table.Body>{categories.map((category) => <Table.Row key={category.id}><Table.Cell><Link className="text-ui-fg-interactive font-medium" style={{ paddingLeft: `${category.depth * 16}px` }} to={`/merchant-categories/${category.id}`}>{category.name}</Link></Table.Cell><Table.Cell>/{category.handle}</Table.Cell><Table.Cell><CategoryStatusBadges category={category} /></Table.Cell><Table.Cell>{category.product_count}</Table.Cell></Table.Row>)}</Table.Body>
             </Table>
           ) : <MerchantEmptyState title="No categories" description="Create categories to organize this merchant's products." />}
-            </>
-          )}
         </Container>
 
-        {section === "all" && <Container className="divide-y p-0">
+        <Container className="divide-y p-0">
           <div className="flex items-center justify-between px-6 py-4">
             <div><Text weight="plus">Shipping profiles</Text><Text size="small" className="text-ui-fg-subtle">Assign these profiles from a product detail page.</Text></div>
-            {canEdit && <Button size="small" variant="secondary" onClick={() => setCreateKind("shipping")}><Plus />Create shipping profile</Button>}
+            {canEdit && <Button size="small" variant="secondary" onClick={() => setShippingOpen(true)}><Plus />Create shipping profile</Button>}
           </div>
           {shippingProfiles.length ? <Table><Table.Header><Table.Row><Table.HeaderCell>Name</Table.HeaderCell><Table.HeaderCell>Type</Table.HeaderCell></Table.Row></Table.Header><Table.Body>{shippingProfiles.map((profile) => <Table.Row key={profile.id}><Table.Cell>{profile.name}</Table.Cell><Table.Cell>{profile.type}</Table.Cell></Table.Row>)}</Table.Body></Table> : <MerchantEmptyState title="No shipping profiles" description="Create a shipping profile for physical products." />}
-        </Container>}
+        </Container>
 
-        {(section === "all" || section === "collections") && <Container className="divide-y p-0">
+        <Container className="divide-y p-0">
           <div className="flex items-center justify-between px-6 py-4">
             <Text weight="plus">Collections</Text>
-            {canEdit && <Button size="small" variant="secondary" onClick={() => setCreateKind("collection")}><Plus />Create collection</Button>}
+            {canEdit && <Button size="small" variant="secondary" onClick={() => setCollectionOpen(true)}><Plus />Create collection</Button>}
           </div>
           {collections.length ? (
             <Table>
-              <Table.Header><Table.Row><Table.HeaderCell>Title</Table.HeaderCell><Table.HeaderCell>Handle</Table.HeaderCell></Table.Row></Table.Header>
-              <Table.Body>{collections.map((collection) => <Table.Row key={collection.id}><Table.Cell>{collection.title}</Table.Cell><Table.Cell>{collection.handle}</Table.Cell></Table.Row>)}</Table.Body>
+              <Table.Header><Table.Row><Table.HeaderCell>Title</Table.HeaderCell><Table.HeaderCell>Handle</Table.HeaderCell><Table.HeaderCell>Products</Table.HeaderCell></Table.Row></Table.Header>
+              <Table.Body>{collections.map((collection) => <Table.Row key={collection.id}><Table.Cell><Link className="text-ui-fg-interactive font-medium" to={`/merchant-collections/${collection.id}`}>{collection.title}</Link></Table.Cell><Table.Cell>/{collection.handle}</Table.Cell><Table.Cell>{collection.product_count}</Table.Cell></Table.Row>)}</Table.Body>
             </Table>
-          ) : <MerchantEmptyState title="No collections" description="Create collections for curated merchant catalogs." />}
-        </Container>}
+          ) : <MerchantEmptyState title="No collections" description="Create a collection to group products for your storefront." />}
+        </Container>
       </div>
-      <CreateCatalogDrawer kind={createKind} session={session} onClose={() => setCreateKind(null)} />
+      {canEdit && (
+        <>
+          <CreateShippingProfileDrawer
+            open={shippingOpen}
+            session={session}
+            onClose={() => setShippingOpen(false)}
+          />
+          <CreateCategoryModal
+            session={session}
+            open={categoryOpen}
+            onOpenChange={setCategoryOpen}
+          />
+          <CreateCollectionModal
+            session={session}
+            open={collectionOpen}
+            onOpenChange={setCollectionOpen}
+          />
+        </>
+      )}
     </>
   )
 }

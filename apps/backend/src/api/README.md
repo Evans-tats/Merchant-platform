@@ -165,6 +165,8 @@ POST /admin/merchants/:merchantId/products
 GET  /admin/merchants/:merchantId/products/:productId
 POST /admin/merchants/:merchantId/products/:productId
 GET|POST /admin/merchants/:merchantId/{categories,collections}
+GET|POST|DELETE /admin/merchants/:merchantId/{collections/:collectionId,categories/:categoryId}
+POST /admin/merchants/:merchantId/{collections/:collectionId,categories/:categoryId}/products
 POST /admin/merchants/:merchantId/inventory
 POST /admin/merchants/:merchantId/inventory/locations
 POST /admin/merchants/:merchantId/inventory/locations/:locationId

@@ -1,6 +1,5 @@
 import type {
   CreateProductWorkflowInputDTO,
-  ProductCategoryWorkflow,
   ProductTypes,
   UpdateProductVariantWorkflowInputDTO,
 } from "@medusajs/framework/types"
@@ -18,10 +17,8 @@ import {
 } from "@medusajs/framework/workflows-sdk"
 import {
   attachInventoryItemToVariants,
-  createCollectionsWorkflow,
   createInventoryItemsStep,
   createShippingProfilesWorkflow,
-  createProductCategoriesWorkflow,
   createProductsWorkflow,
   createRemoteLinkStep,
   uploadFilesWorkflow,
@@ -33,12 +30,11 @@ import type { ResolvedMerchantId } from "../services/tenant-resolution"
 import { resolveStaffMerchant } from "../services/tenant-resolution"
 import {
   type MerchantScopeInput,
-  validateMerchantCategoryParentsStep,
-  validateMerchantProductIdsStep,
   validateMerchantProductReferencesStep,
   validateMerchantResourceStep,
   validateMerchantScopeStep,
 } from "./steps/validate-merchant-commerce"
+import { describeProductPhotoStep } from "./steps/describe-product-photo"
 
 type UpdateMerchantProductInput = MerchantScopeInput & {
   product_id: string
@@ -108,17 +104,38 @@ type ExistingProductPricing = {
   }>
 }
 
+type CreateProductVariantInput =
+  NonNullable<CreateProductWorkflowInputDTO["variants"]>[number]
+
+export type CreateMerchantProductInput =
+  Omit<CreateProductWorkflowInputDTO, "variants"> & {
+    variants?: Array<CreateProductVariantInput & {
+      // Product image URLs to show when a shopper picks this variant.
+      image_urls?: string[]
+    }>
+  }
+
 export type CreateMerchantProductsInput = MerchantScopeInput & {
-  products: CreateProductWorkflowInputDTO[]
+  products: CreateMerchantProductInput[]
 }
 
-export type CreateMerchantCategoriesInput = MerchantScopeInput & {
-  product_categories:
-    ProductCategoryWorkflow.CreateProductCategoriesWorkflowInput["product_categories"]
+type VariantImageLinkRequest = {
+  product_index: number
+  variant_title: string
+  options: Record<string, string>
+  image_urls: string[]
 }
 
-export type CreateMerchantCollectionsInput = MerchantScopeInput & {
-  collections: ProductTypes.CreateProductCollectionDTO[]
+type VariantImageProductGraph = {
+  id: string
+  images?: Array<{ id: string; url: string } | null>
+  variants?: Array<{
+    id: string
+    options?: Array<{
+      value: string
+      option?: { title: string } | null
+    } | null>
+  } | null>
 }
 
 export type CreateMerchantShippingProfilesInput = MerchantScopeInput & {
@@ -136,6 +153,15 @@ export type UploadMerchantProductMediaInput = MerchantScopeInput &
   MerchantCatalogMutationActor & {
     files: MerchantProductMediaFile[]
   }
+
+export type GenerateProductDraftFromPhotoInput = MerchantScopeInput &
+  MerchantCatalogMutationActor & {
+    files: MerchantProductMediaFile[]
+  }
+
+type MerchantCategoryChoicesGraph = {
+  product_categories?: Array<{ id: string; name: string } | null>
+}
 
 const supportedProductImageTypes = new Set([
   "image/avif",
@@ -405,6 +431,27 @@ const validateMerchantProductMediaStep = createStep(
   }
 )
 
+const listMerchantCategoryChoicesStep = createStep(
+  "list-merchant-category-choices",
+  async (input: { merchant_id: string }, { container }) => {
+    const query = container.resolve(ContainerRegistrationKeys.QUERY)
+    const { data } = await query.graph({
+      entity: "merchant",
+      fields: ["id", "product_categories.id", "product_categories.name"],
+      filters: { id: input.merchant_id },
+    })
+    const merchant = (data as unknown as MerchantCategoryChoicesGraph[])[0]
+
+    return new StepResponse(
+      (merchant?.product_categories ?? [])
+        .filter((category): category is { id: string; name: string } =>
+          Boolean(category?.id && category.name)
+        )
+        .map(({ id, name }) => ({ id, name }))
+    )
+  }
+)
+
 const validateMerchantPublishedProductPricesStep = createStep(
   "validate-merchant-published-product-prices",
   async (input: ProductPricingValidationInput, { container }) => {
@@ -501,6 +548,119 @@ const validateMerchantPublishedProductPricesStep = createStep(
   }
 )
 
+// Checks variant photos before anything is created, so a bad photo reference
+// fails the request instead of rolling back a half-created product.
+const validateMerchantVariantImagesStep = createStep(
+  "validate-merchant-variant-images",
+  async (input: { products: CreateMerchantProductInput[] }) => {
+    const requests: VariantImageLinkRequest[] = []
+
+    input.products.forEach((product, productIndex) => {
+      const productImageUrls = new Set(
+        (product.images ?? []).map(({ url }) => url)
+      )
+
+      for (const variant of product.variants ?? []) {
+        const imageUrls = Array.from(new Set(variant.image_urls ?? []))
+        if (!imageUrls.length) continue
+
+        if (imageUrls.some((url) => !productImageUrls.has(url))) {
+          throw new MedusaError(
+            MedusaError.Types.INVALID_DATA,
+            `Photos for ${product.title ?? "the product"} variant ${variant.title} must be images of the product`
+          )
+        }
+
+        requests.push({
+          product_index: productIndex,
+          variant_title: variant.title,
+          options: variant.options ?? {},
+          image_urls: imageUrls,
+        })
+      }
+    })
+
+    return new StepResponse(requests)
+  }
+)
+
+const variantHasOptions = (
+  variant: NonNullable<NonNullable<VariantImageProductGraph["variants"]>[number]>,
+  options: Record<string, string>
+) => {
+  const variantOptions = new Map(
+    (variant.options ?? []).flatMap((entry) =>
+      entry?.option?.title ? [[entry.option.title, entry.value] as const] : []
+    )
+  )
+  const expected = Object.entries(options)
+
+  return (
+    expected.length === variantOptions.size &&
+    expected.every(([title, value]) => variantOptions.get(title) === value)
+  )
+}
+
+const linkMerchantVariantImagesStep = createStep(
+  "link-merchant-variant-images",
+  async (
+    input: { product_ids: string[]; requests: VariantImageLinkRequest[] },
+    { container }
+  ) => {
+    if (!input.requests.length) {
+      return new StepResponse([], [] as Array<{ image_id: string; variant_id: string }>)
+    }
+
+    const query = container.resolve(ContainerRegistrationKeys.QUERY)
+    const { data } = await query.graph({
+      entity: "product",
+      fields: [
+        "id",
+        "images.id",
+        "images.url",
+        "variants.id",
+        "variants.options.value",
+        "variants.options.option.title",
+      ],
+      filters: { id: input.product_ids },
+    })
+    const products = data as unknown as VariantImageProductGraph[]
+    const links = input.requests.flatMap((request) => {
+      const product = products.find(({ id }) => {
+        return id === input.product_ids[request.product_index]
+      })
+      const variant = product?.variants?.find((candidate) => {
+        return candidate ? variantHasOptions(candidate, request.options) : false
+      })
+
+      if (!product || !variant) {
+        throw new MedusaError(
+          MedusaError.Types.UNEXPECTED_STATE,
+          `Couldn't attach photos to variant ${request.variant_title}`
+        )
+      }
+
+      return request.image_urls.flatMap((url) => {
+        const image = product.images?.find((entry) => entry?.url === url)
+        return image ? [{ image_id: image.id, variant_id: variant.id }] : []
+      })
+    })
+
+    if (links.length) {
+      await container.resolve(Modules.PRODUCT).addImageToVariant(links)
+    }
+
+    return new StepResponse(links, links)
+  },
+  async (links, { container }) => {
+    if (!links?.length) {
+      return
+    }
+
+    await container.resolve(Modules.PRODUCT).removeImageFromVariant(links)
+  }
+)
+
 export const createMerchantProductsWorkflow = createWorkflow(
   "create-merchant-products",
   function (input: CreateMerchantProductsInput) {
@@ -510,6 +670,9 @@ export const createMerchantProductsWorkflow = createWorkflow(
       scope,
       products: input.products,
     })
+    const variantImageRequests = validateMerchantVariantImagesStep({
+      products: input.products,
+    })
     const validatedProducts = validateMerchantPublishedProductPricesStep({
       products: input.products,
     })
@@ -517,10 +680,17 @@ export const createMerchantProductsWorkflow = createWorkflow(
     const productsInput = transform(
       { validatedProducts, scope },
       ({ validatedProducts, scope }) => {
-        const products = validatedProducts as CreateProductWorkflowInputDTO[]
+        const products = validatedProducts as CreateMerchantProductInput[]
         return {
-          products: products.map((product) => ({
+          products: products.map(({ variants, ...product }) => ({
             ...product,
+            // image_urls is linked after creation; the product module
+            // doesn't accept it on variants.
+            ...(variants && {
+              variants: variants.map(({ image_urls: _imageUrls, ...variant }) => {
+                return variant
+              }),
+            }),
             sales_channels: [{ id: scope.sales_channel_id }],
             shipping_profile_id:
               product.shipping_profile_id ?? scope.shipping_profile_id,
@@ -546,6 +716,14 @@ export const createMerchantProductsWorkflow = createWorkflow(
     )
 
     createRemoteLinkStep(productLinks)
+    const variantImageLinkInput = transform(
+      { products, variantImageRequests },
+      ({ products, variantImageRequests }) => ({
+        product_ids: products.map(({ id }) => id),
+        requests: variantImageRequests,
+      })
+    )
+    linkMerchantVariantImagesStep(variantImageLinkInput)
     provisionManagedVariantInventory(products)
 
     return new WorkflowResponse(products)
@@ -670,6 +848,35 @@ export const uploadMerchantProductMediaFromAdminWorkflow = createWorkflow(
   }
 )
 
+// Drafts listing details from up to five photos of one product. Nothing is
+// uploaded or saved: the photos stay in the create form and are uploaded
+// only if the merchant publishes the product.
+export const generateProductDraftFromPhotoWorkflow = createWorkflow(
+  "generate-product-draft-from-photo",
+  function (input: GenerateProductDraftFromPhotoInput) {
+    const scope = validateMerchantCatalogMutationAccessStep(input)
+    const validatedFiles = validateMerchantProductMediaStep({
+      files: input.files,
+    })
+    const categories = listMerchantCategoryChoicesStep({
+      merchant_id: scope.merchant_id,
+    })
+    const describeInput = transform(
+      { validatedFiles, categories },
+      ({ validatedFiles, categories }) => ({
+        photos: validatedFiles.map(({ mimeType, content }) => ({
+          mimeType,
+          content,
+        })),
+        categories,
+      })
+    )
+    const draft = describeProductPhotoStep(describeInput)
+
+    return new WorkflowResponse(draft)
+  }
+)
+
 export const listMerchantProductsWorkflow = createWorkflow(
   "list-merchant-products",
   function (input: ListMerchantProductsInput) {
@@ -702,86 +909,6 @@ export const retrieveMerchantProductWorkflow = createWorkflow(
     })
 
     return new WorkflowResponse(product)
-  }
-)
-
-export const createMerchantCategoriesWorkflow = createWorkflow(
-  "create-merchant-categories",
-  function (input: CreateMerchantCategoriesInput) {
-    const scope = validateMerchantScopeStep(input)
-    const parentCategoryIds = transform({ input }, ({ input }) => {
-      return input.product_categories
-        .map(({ parent_category_id }) => parent_category_id)
-        .filter((id): id is string => Boolean(id))
-    })
-
-    validateMerchantCategoryParentsStep({
-      scope,
-      parent_category_ids: parentCategoryIds,
-    })
-    const categories = createProductCategoriesWorkflow.runAsStep({
-      input: {
-        product_categories: input.product_categories,
-      },
-    })
-    const categoryLinks = transform(
-      { categories, scope },
-      ({ categories, scope }) => {
-        return categories.map((category) => ({
-          [MERCHANT_MODULE]: {
-            merchant_id: scope.merchant_id,
-          },
-          [Modules.PRODUCT]: {
-            product_category_id: category.id,
-          },
-        }))
-      }
-    )
-
-    createRemoteLinkStep(categoryLinks)
-
-    return new WorkflowResponse(categories)
-  }
-)
-
-export const createMerchantCollectionsWorkflow = createWorkflow(
-  "create-merchant-collections",
-  function (input: CreateMerchantCollectionsInput) {
-    const scope = validateMerchantScopeStep(input)
-    const productIds = transform({ input }, ({ input }) => {
-      return Array.from(
-        new Set(input.collections.flatMap(({ product_ids }) => {
-          return product_ids ?? []
-        }))
-      )
-    })
-
-    validateMerchantProductIdsStep({
-      scope,
-      product_ids: productIds,
-    })
-    const collections = createCollectionsWorkflow.runAsStep({
-      input: {
-        collections: input.collections,
-      },
-    })
-    const collectionLinks = transform(
-      { collections, scope },
-      ({ collections, scope }) => {
-        return collections.map((collection) => ({
-          [MERCHANT_MODULE]: {
-            merchant_id: scope.merchant_id,
-          },
-          [Modules.PRODUCT]: {
-            product_collection_id: collection.id,
-          },
-        }))
-      }
-    )
-
-    createRemoteLinkStep(collectionLinks)
-
-    return new WorkflowResponse(collections)
   }
 )
 

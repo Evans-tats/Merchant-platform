@@ -1,6 +1,7 @@
 import { defineWidgetConfig } from "@medusajs/admin-sdk"
 import {
   BellAlert,
+  BellAlertDone,
   BuildingStorefront,
   ChartBar,
   CheckMini,
@@ -8,9 +9,10 @@ import {
   Clock,
   CogSixTooth,
   House,
+  Sparkles,
   UserGroup,
 } from "@medusajs/icons"
-import { Button, DropdownMenu, Text } from "@medusajs/ui"
+import { Button, DropdownMenu, IconButton, Text } from "@medusajs/ui"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
@@ -19,6 +21,7 @@ import {
   merchantApi,
   merchantQueryKeys,
   setActiveMerchantId,
+  type MerchantNotification,
 } from "../lib/merchant-api"
 
 const merchantRouteFor = (pathname: string): string | undefined => {
@@ -33,6 +36,14 @@ const merchantRouteFor = (pathname: string): string | undefined => {
   const detailRoutes = [
     { pattern: /^\/orders\/([^/]+)$/, target: "/merchant-orders" },
     { pattern: /^\/products\/([^/]+)$/, target: "/merchant-products" },
+    {
+      pattern: /^\/collections\/(?!create$)([^/]+)$/,
+      target: "/merchant-collections",
+    },
+    {
+      pattern: /^\/categories\/(?!create$|organize$)([^/]+)$/,
+      target: "/merchant-categories",
+    },
     { pattern: /^\/customers\/([^/]+)$/, target: "/merchant-customers" },
     {
       pattern: /^\/customer-groups\/(?!create$)([^/]+)$/,
@@ -101,6 +112,24 @@ const MerchantAdminShell = () => {
     retry: false,
   })
   const session = sessionQuery.data
+  const merchantId = session?.merchant.id ?? ""
+  // Shares the notifications page's query key so marking a notification read
+  // there clears the unread indicator here.
+  const notificationsQuery = useQuery({
+    queryKey: merchantQueryKeys.resource(merchantId, "notifications"),
+    queryFn: async () =>
+      (
+        await merchantApi.get<{ notifications: MerchantNotification[] }>(
+          merchantId,
+          "/notifications",
+        )
+      ).notifications,
+    enabled: Boolean(session),
+    refetchInterval: 60_000,
+  })
+  const unreadCount = (notificationsQuery.data ?? []).filter(
+    (notification) => !notification.read_at,
+  ).length
 
   useEffect(() => {
     if (!session) {
@@ -207,78 +236,93 @@ const MerchantAdminShell = () => {
   const workspaceLinks = [
     { label: "Home", to: "/merchant", icon: House },
     { label: "Reports", to: "/merchant/reports", icon: ChartBar },
+    { label: "Assistant", to: "/merchant/assistant", icon: Sparkles },
     { label: "Team", to: "/merchant/team", icon: UserGroup },
     { label: "Settings", to: "/merchant/settings", icon: CogSixTooth },
-    {
-      label: "Notifications",
-      to: "/merchant/notifications",
-      icon: BellAlert,
-    },
     { label: "Activity", to: "/merchant/activity", icon: Clock },
   ]
+  const notificationsLabel = unreadCount
+    ? `Notifications (${unreadCount} unread)`
+    : "Notifications"
 
   return (
-    <DropdownMenu>
-      <DropdownMenu.Trigger asChild>
-        <Button
-          size="small"
-          variant="transparent"
-          className="merchant-store-switcher h-auto min-w-52 justify-between py-1"
+    <div className="flex items-center gap-x-3">
+      <IconButton
+        asChild
+        size="small"
+        variant="transparent"
+        className="text-ui-fg-muted hover:text-ui-fg-subtle"
+      >
+        <Link
+          to="/merchant/notifications"
+          aria-label={notificationsLabel}
+          title={notificationsLabel}
         >
-          {brand}
-          <ChevronDownMini className="text-ui-fg-muted" />
-        </Button>
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Content align="end" className="min-w-64">
-        <DropdownMenu.Label>{session.merchant.name}</DropdownMenu.Label>
-        <DropdownMenu.Separator />
-        {workspaceLinks.map(({ label, to, icon: Icon }) => (
-          <DropdownMenu.Item key={to} asChild>
-            <Link to={to} className="flex items-center gap-x-2">
-              <Icon className="text-ui-fg-subtle" />
-              <Text size="small" leading="compact">
-                {label}
-              </Text>
-            </Link>
-          </DropdownMenu.Item>
-        ))}
-        {session.memberships.length > 1 && (
-          <>
-            <DropdownMenu.Separator />
-            <DropdownMenu.Label>Switch store</DropdownMenu.Label>
-          </>
-        )}
-        {session.memberships.length > 1 &&
-          session.memberships.map(({ merchant, member }) => (
-            <DropdownMenu.Item
-              key={merchant.id}
-              className="flex items-center justify-between gap-x-3"
-              onClick={() => selectMerchant(merchant.id)}
-            >
-              <div className="flex min-w-0 flex-col">
-                <Text
-                  size="small"
-                  leading="compact"
-                  weight="plus"
-                  className="truncate"
-                >
-                  {merchant.name}
+          {unreadCount ? <BellAlertDone /> : <BellAlert />}
+        </Link>
+      </IconButton>
+      <DropdownMenu>
+        <DropdownMenu.Trigger asChild>
+          <Button
+            size="small"
+            variant="transparent"
+            className="merchant-store-switcher h-auto min-w-52 justify-between py-1"
+          >
+            {brand}
+            <ChevronDownMini className="text-ui-fg-muted" />
+          </Button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Content align="end" className="min-w-64">
+          <DropdownMenu.Label>{session.merchant.name}</DropdownMenu.Label>
+          <DropdownMenu.Separator />
+          {workspaceLinks.map(({ label, to, icon: Icon }) => (
+            <DropdownMenu.Item key={to} asChild>
+              <Link to={to} className="flex items-center gap-x-2">
+                <Icon className="text-ui-fg-subtle" />
+                <Text size="small" leading="compact">
+                  {label}
                 </Text>
-                <Text
-                  size="xsmall"
-                  leading="compact"
-                  className="text-ui-fg-subtle"
-                >
-                  {member.role}
-                </Text>
-              </div>
-              {merchant.id === session.merchant.id && (
-                <CheckMini className="text-ui-fg-interactive" />
-              )}
+              </Link>
             </DropdownMenu.Item>
           ))}
-      </DropdownMenu.Content>
-    </DropdownMenu>
+          {session.memberships.length > 1 && (
+            <>
+              <DropdownMenu.Separator />
+              <DropdownMenu.Label>Switch store</DropdownMenu.Label>
+            </>
+          )}
+          {session.memberships.length > 1 &&
+            session.memberships.map(({ merchant, member }) => (
+              <DropdownMenu.Item
+                key={merchant.id}
+                className="flex items-center justify-between gap-x-3"
+                onClick={() => selectMerchant(merchant.id)}
+              >
+                <div className="flex min-w-0 flex-col">
+                  <Text
+                    size="small"
+                    leading="compact"
+                    weight="plus"
+                    className="truncate"
+                  >
+                    {merchant.name}
+                  </Text>
+                  <Text
+                    size="xsmall"
+                    leading="compact"
+                    className="text-ui-fg-subtle"
+                  >
+                    {member.role}
+                  </Text>
+                </div>
+                {merchant.id === session.merchant.id && (
+                  <CheckMini className="text-ui-fg-interactive" />
+                )}
+              </DropdownMenu.Item>
+            ))}
+        </DropdownMenu.Content>
+      </DropdownMenu>
+    </div>
   )
 }
 

@@ -1,35 +1,30 @@
-import type { ProductCategoryWorkflow } from "@medusajs/framework/types"
 import type {
-  MedusaRequest,
+  AuthenticatedMedusaRequest,
   MedusaResponse,
 } from "@medusajs/framework/http"
 
 import { getMerchantRouteScope } from "../../../../utils/merchant-route-scope"
 import { requireMerchantRole } from "../../../../utils/merchant-request-context"
-import { createMerchantCategoriesWorkflow } from "../../../../../workflows/merchant-catalog"
-import { retrieveMerchantManagementWorkflow } from "../../../../../workflows/merchant-management"
+import {
+  createMerchantCategoriesWorkflow,
+  listMerchantCategoriesWorkflow,
+} from "../../../../../workflows/merchant-categories"
 import { recordMerchantActivity } from "../../../../utils/record-merchant-activity"
-
-type CreateCategoriesBody = {
-  product_categories:
-    ProductCategoryWorkflow.CreateProductCategoriesWorkflowInput["product_categories"]
-}
+import type { CreateMerchantCategoriesBody } from "./middlewares"
 
 export const GET = async (
-  request: MedusaRequest,
+  request: AuthenticatedMedusaRequest,
   response: MedusaResponse
 ) => {
-  const { result } = await retrieveMerchantManagementWorkflow(
+  const { result } = await listMerchantCategoriesWorkflow(
     request.scope
   ).run({ input: getMerchantRouteScope(request) })
-  const categories =
-    (result as Record<string, unknown>).product_categories ?? []
 
-  response.status(200).json({ product_categories: categories })
+  response.status(200).json(result)
 }
 
 export const POST = async (
-  request: MedusaRequest<CreateCategoriesBody>,
+  request: AuthenticatedMedusaRequest<CreateMerchantCategoriesBody>,
   response: MedusaResponse
 ) => {
   requireMerchantRole(request, ["owner", "admin"])
@@ -42,11 +37,12 @@ export const POST = async (
     },
   })
 
-  await recordMerchantActivity(request, {
-    action: "catalog.categories_created",
+  await Promise.all(result.map((category) => recordMerchantActivity(request, {
+    action: "catalog.category_created",
     resource_type: "product_category",
-    description: `Created ${result.length} product categories`,
-  })
+    resource_id: category.id,
+    description: `Created category ${category.name}`,
+  })))
 
   response.status(201).json({ product_categories: result })
 }

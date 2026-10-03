@@ -26,15 +26,27 @@ import { merchantOrderShipmentMiddlewares } from "./admin/merchants/[merchantId]
 import { merchantProductMiddlewares } from "./admin/merchants/[merchantId]/products/middlewares"
 import { merchantCustomerMiddlewares } from "./admin/merchants/[merchantId]/customers/middlewares"
 import { merchantCustomerSegmentMiddlewares } from "./admin/merchants/[merchantId]/customer-segments/middlewares"
+import { merchantCollectionMiddlewares } from "./admin/merchants/[merchantId]/collections/middlewares"
+import { merchantCategoryMiddlewares } from "./admin/merchants/[merchantId]/categories/middlewares"
 import { merchantUploadMiddlewares } from "./admin/merchants/[merchantId]/uploads/middlewares"
+import { merchantProductDraftMiddlewares } from "./admin/merchants/[merchantId]/product-drafts/middlewares"
 import { merchantSessionMiddlewares } from "./admin/merchant-session/middlewares"
 import { merchantHomeMiddlewares } from "./admin/merchants/[merchantId]/home/middlewares"
+import { merchantAssistantMiddlewares } from "./admin/merchants/[merchantId]/assistant/middlewares"
 
 export default defineMiddlewares({
   routes: [
     {
       matcher:
-        /^\/admin(?!\/(?:merchants\/[^/]+|merchant-session|invites\/accept|users\/me|feature-flags|rbac\/me\/permissions)(?:\/|$))(?:\/|$)/,
+        /^\/admin(?!\/(?:merchants\/[^/]+|merchant-session|invites\/accept|users\/me|feature-flags|rbac\/me\/permissions|layouts)(?:\/|$))(?:\/|$)/,
+      middlewares: [requirePlatformAdministrator],
+    },
+    {
+      // Merchant staff read the admin layout so the dashboard applies the
+      // platform default (e.g. the hidden core topbar bell). Saving stays
+      // platform-only: Medusa lets any caller set the default for every tenant.
+      matcher: "/admin/layouts/*",
+      method: ["POST", "DELETE"],
       middlewares: [requirePlatformAdministrator],
     },
     {
@@ -306,9 +318,13 @@ export default defineMiddlewares({
     ...merchantProductMiddlewares,
     ...merchantCustomerMiddlewares,
     ...merchantCustomerSegmentMiddlewares,
+    ...merchantCollectionMiddlewares,
+    ...merchantCategoryMiddlewares,
     ...merchantUploadMiddlewares,
+    ...merchantProductDraftMiddlewares,
     ...merchantSessionMiddlewares,
     ...merchantHomeMiddlewares,
+    ...merchantAssistantMiddlewares,
     {
       matcher:
         "/admin/merchants/:merchantId/orders/:orderId/payments/:paymentId/refund",
@@ -403,32 +419,6 @@ export default defineMiddlewares({
         validateAndTransformBody(
           z.object({
             address: z.record(z.string(), z.unknown()),
-          })
-        ),
-      ],
-    },
-    {
-      matcher: "/admin/merchants/:merchantId/categories",
-      methods: ["POST"],
-      middlewares: [
-        validateAndTransformBody(
-          z.object({
-            product_categories: z
-              .array(z.record(z.string(), z.unknown()))
-              .min(1),
-          })
-        ),
-      ],
-    },
-    {
-      matcher: "/admin/merchants/:merchantId/collections",
-      methods: ["POST"],
-      middlewares: [
-        validateAndTransformBody(
-          z.object({
-            collections: z
-              .array(z.record(z.string(), z.unknown()))
-              .min(1),
           })
         ),
       ],

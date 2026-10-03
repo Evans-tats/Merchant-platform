@@ -82,3 +82,4 @@ export const DELETE = async (
     parent: result.customer,
   })
 }
+

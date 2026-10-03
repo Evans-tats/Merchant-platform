@@ -20,6 +20,7 @@
     "seed:demo-merchants": "medusa exec ./src/scripts/seed-demo-merchants.ts",
     "seed:mpesa-registry": "medusa exec ./src/scripts/seed-mpesa-registry.ts",
     "onboard:mpesa": "medusa exec ./src/scripts/mpesa-onboarding-cli.ts",
+    "draft:photo-test": "node --use-system-ca --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ./scripts/draft-from-photo-test.mjs",
     "lint": "medusa lint",
     "test": "npm run test:unit && npm run test:integration:modules:local && npm run test:integration:http:local",
     "test:ci": "npm run test:unit && npm run test:integration:modules && npm run test:integration:http",
@@ -32,6 +33,10 @@
     "test:db:down": "docker compose -p merchant-platform-tests -f ../../docker-compose.test.yml down --volumes --remove-orphans"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^8.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@google/genai": "^2.27.0",
     "@medusajs/admin-sdk": "2.19.0",
     "@medusajs/admin-shared": "2.19.0",
     "@medusajs/caching": "2.19.0",

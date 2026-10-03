@@ -69,7 +69,16 @@ export const CreateMerchantProductsSchema = z.object({
   products: z.array(
     ProductFieldsSchema.extend({
       options: z.array(ProductOptionSchema).min(1).max(3),
-      variants: z.array(CreateProductVariantSchema).min(1).max(500),
+      variants: z.array(CreateProductVariantSchema.extend({
+        // Photos shown when a shopper picks this variant. Each must also be
+        // one of the product's images.
+        image_urls: z.array(z.url()).max(20).optional(),
+      })).min(1).max(500),
+      // Marks descriptions drafted from a photo, so AI-written text can be
+      // told apart from the merchant's own.
+      metadata: z.object({
+        description_source: z.enum(["ai", "ai_edited"]),
+      }).optional(),
     })
   ).min(1).max(100),
 })

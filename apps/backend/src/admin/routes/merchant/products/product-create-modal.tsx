@@ -1,8 +1,9 @@
-import { ArrowUpTray, Camera, PlusMini, Trash } from "@medusajs/icons"
+import { ArrowUpTray, Camera, PlusMini, Sparkles, Spinner, Trash } from "@medusajs/icons"
 import {
   Avatar,
   Button,
   Checkbox,
+  clx,
   FocusModal,
   InlineTip,
   Input,
@@ -22,12 +23,17 @@ import {
   errorMessage,
   merchantApi,
   merchantQueryKeys,
+  type MerchantCategoryListResponse,
   type MerchantDeliverySettings,
   type MerchantProduct,
+  type MerchantProductPhotoDraft,
   type MerchantSession,
 } from "../../../lib/merchant-api"
+import { categoryChoices } from "../categories/category-form"
 import {
   formatFileSize,
+  MAX_DRAFT_PHOTOS,
+  resizeImageForDraft,
   SUPPORTED_IMAGE_ACCEPT,
   validateImageFiles,
 } from "../../../lib/product-media"
@@ -42,6 +48,16 @@ type ProductVariantDraft = {
   manageInventory: boolean
   allowBackorder: boolean
   options: Record<string, string>
+  // Photos shown when a shopper picks this variant.
+  imageKeys: string[]
+  // Once the merchant picks photos, drafts stop suggesting them.
+  imageKeysEdited: boolean
+}
+
+// Which option values a drafted photo shows, keyed by the photo's media key.
+type PhotoOptionLink = {
+  key: string
+  optionValues: Array<{ option: string; value: string }>
 }
 
 type ProductMediaDraft = {
@@ -70,11 +86,51 @@ const splitValues = (value: string) => Array.from(new Set(
   value.split(",").map((entry) => entry.trim()).filter(Boolean)
 ))
 
+const optionsSignature = (entries: Array<{ title: string; values: string }>) =>
+  JSON.stringify(entries.map((option) => [
+    option.title.trim(),
+    splitValues(option.values),
+  ]))
+
+const toOptionDrafts = (
+  draftOptions: MerchantProductPhotoDraft["options"]
+): ProductOptionDraft[] => draftOptions
+  .map((option, index) => ({
+    key: `option-photo-${index}`,
+    title: option.title.trim(),
+    values: option.values
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .join(", "),
+  }))
+  .filter((option) => option.title && option.values)
+  .slice(0, 3)
+
+// A photo belongs to a variant when every option value the photo shows
+// matches that variant, for example Colour: Brown.
+const suggestImageKeys = (
+  combination: Record<string, string>,
+  photoLinks: PhotoOptionLink[]
+) => photoLinks
+  .filter(({ optionValues }) => optionValues.length > 0 && optionValues.every(
+    ({ option, value }) => Object.entries(combination).some(([title, chosen]) => {
+      return title.toLowerCase() === option.toLowerCase() &&
+        chosen.toLowerCase() === value.toLowerCase()
+    })
+  ))
+  .map(({ key }) => key)
+
+// Thumbnail first, then the rest in order, up to what one draft accepts.
+const selectDraftPhotos = (media: ProductMediaDraft[]) => [...media]
+  .sort((a, b) => Number(b.isThumbnail) - Number(a.isThumbnail))
+  .slice(0, MAX_DRAFT_PHOTOS)
+
 const buildVariants = (
   hasVariants: boolean,
   options: ProductOptionDraft[],
   previous: ProductVariantDraft[],
-  currencyCodes: string[]
+  currencyCodes: string[],
+  photoLinks: PhotoOptionLink[]
 ) => {
   const normalized = hasVariants
     ? options.map((option) => ({
@@ -103,6 +159,9 @@ const buildVariants = (
           currencyCode,
           existing.prices[currencyCode] ?? "",
         ])),
+        imageKeys: existing.imageKeysEdited
+          ? existing.imageKeys
+          : suggestImageKeys(combination, photoLinks),
       }
     }
 
@@ -117,6 +176,8 @@ const buildVariants = (
       manageInventory: true,
       allowBackorder: false,
       options: combination,
+      imageKeys: hasVariants ? suggestImageKeys(combination, photoLinks) : [],
+      imageKeysEdited: false,
     }
   })
 }
@@ -150,6 +211,29 @@ export const ProductCreateModal = ({
   const [categoryIds, setCategoryIds] = useState<string[]>([])
   const [discountable, setDiscountable] = useState(true)
   const [variants, setVariants] = useState<ProductVariantDraft[]>([])
+  const [photoDraft, setPhotoDraft] = useState<MerchantProductPhotoDraft | null>(null)
+  // What the last draft filled in. A field still holding drafted text can be
+  // replaced by a newer draft; anything the merchant changed is kept. The
+  // description also tells on save whether the merchant kept the AI text.
+  const [draftedTitle, setDraftedTitle] = useState<string | null>(null)
+  const [draftedDescription, setDraftedDescription] = useState<string | null>(null)
+  const [draftedCategoryId, setDraftedCategoryId] = useState<string | null>(null)
+  const [draftedOptions, setDraftedOptions] = useState<string | null>(null)
+  const [draftedPhotoKeys, setDraftedPhotoKeys] = useState<string[]>([])
+  const [photoLinks, setPhotoLinks] = useState<PhotoOptionLink[]>([])
+
+  const photoDraftStatusQuery = useQuery({
+    queryKey: merchantQueryKeys.resource(
+      session.merchant.id,
+      "product-drafts-status"
+    ),
+    queryFn: () => merchantApi.get<{ enabled: boolean }>(
+      session.merchant.id,
+      "/product-drafts"
+    ),
+    enabled: open,
+  })
+  const photoDraftsEnabled = photoDraftStatusQuery.data?.enabled === true
 
   const referencesQuery = useQuery({
     queryKey: merchantQueryKeys.resource(
@@ -158,9 +242,10 @@ export const ProductCreateModal = ({
     ),
     queryFn: async (): Promise<ReferenceData> => {
       const [categories, collections, deliverySettings] = await Promise.all([
-        merchantApi.get<{
-          product_categories: ReferenceData["categories"]
-        }>(session.merchant.id, "/categories"),
+        merchantApi.get<MerchantCategoryListResponse>(
+          session.merchant.id,
+          "/categories"
+        ),
         merchantApi.get<{
           collections: ReferenceData["collections"]
         }>(session.merchant.id, "/collections"),
@@ -171,7 +256,7 @@ export const ProductCreateModal = ({
       ])
 
       return {
-        categories: categories.product_categories,
+        categories: categoryChoices(categories.product_categories),
         collections: collections.collections,
         shippingProfiles: deliverySettings.shipping_profiles,
         regions: deliverySettings.regions,
@@ -203,7 +288,94 @@ export const ProductCreateModal = ({
     setCategoryIds([])
     setDiscountable(true)
     setVariants([])
+    setPhotoDraft(null)
+    setDraftedTitle(null)
+    setDraftedDescription(null)
+    setDraftedCategoryId(null)
+    setDraftedOptions(null)
+    setDraftedPhotoKeys([])
+    setPhotoLinks([])
   }
+
+  const hasFilledOptions =
+    hasVariants && options.some((option) => option.values.trim())
+  const optionsHeldByDraft =
+    hasVariants && draftedOptions === optionsSignature(options)
+  // True until the merchant edits any text a draft filled in.
+  const draftTextUntouched =
+    (draftedTitle === null || title === draftedTitle) &&
+    (draftedDescription === null || description === draftedDescription)
+  const suggestedOptions = photoDraft ? toOptionDrafts(photoDraft.options) : []
+  const suggestedOptionsInUse =
+    hasVariants &&
+    suggestedOptions.length > 0 &&
+    optionsSignature(options) === optionsSignature(suggestedOptions)
+  const photosAddedSinceDraft = photoDraft !== null &&
+    selectDraftPhotos(mediaFiles).some(({ key }) => !draftedPhotoKeys.includes(key))
+
+  const applyDraftOptions = (draftOptions: ProductOptionDraft[]) => {
+    if (!draftOptions.length) return
+
+    setHasVariants(true)
+    setOptions(draftOptions)
+    setDraftedOptions(optionsSignature(draftOptions))
+  }
+
+  // Fills empty fields and replaces ones still holding earlier drafted text.
+  // Anything the merchant typed or changed is never overwritten.
+  const applyPhotoDraft = (
+    draft: MerchantProductPhotoDraft,
+    photos: ProductMediaDraft[]
+  ) => {
+    setPhotoDraft(draft)
+    setDraftedPhotoKeys(photos.map(({ key }) => key))
+    if (!draft.photo_usable || draft.mixed_products) return
+
+    if (!title.trim() || title === draftedTitle) {
+      setTitle(draft.title)
+      setDraftedTitle(draft.title)
+    }
+    if (
+      draft.description.trim() &&
+      (!description.trim() || description === draftedDescription)
+    ) {
+      setDescription(draft.description)
+      setDraftedDescription(draft.description)
+    }
+    const categoryHeldByDraft =
+      categoryIds.length === 1 && categoryIds[0] === draftedCategoryId
+    if (draft.category_id && (!categoryIds.length || categoryHeldByDraft)) {
+      setCategoryIds([draft.category_id])
+      setDraftedCategoryId(draft.category_id)
+    }
+    setPhotoLinks(draft.photos.flatMap(({ index, option_values }) => {
+      const photo = photos[index - 1]
+      return photo ? [{ key: photo.key, optionValues: option_values }] : []
+    }))
+    if (optionsHeldByDraft) {
+      applyDraftOptions(toOptionDrafts(draft.options))
+    }
+  }
+
+  const draftFromPhotos = useMutation({
+    mutationFn: async (photos: ProductMediaDraft[]) => {
+      const files = await Promise.all(
+        photos.map(({ file }) => resizeImageForDraft(file))
+      )
+      return merchantApi.draftFromPhotos(session.merchant.id, files)
+    },
+    onSuccess: ({ draft }, photos) => {
+      applyPhotoDraft(draft, photos)
+      if (draft.photo_usable && !draft.mixed_products) {
+        toast.success(
+          photos.length > 1
+            ? `Details drafted from ${photos.length} photos`
+            : "Details drafted from photo"
+        )
+      }
+    },
+    onError: (draftError) => toast.error(errorMessage(draftError)),
+  })
 
   const createProduct = useMutation({
     mutationFn: async (status: MerchantProduct["status"]) => {
@@ -229,6 +401,16 @@ export const ProductCreateModal = ({
       const uploadedThumbnail = thumbnailUpload.files[0]?.url
       const images = [...thumbnailUpload.files, ...otherUploads.files]
         .map(({ url }) => ({ url }))
+      // Uploads come back in the order sent, which links each photo picked
+      // for a variant to its uploaded URL.
+      const uploadedUrls = new Map<string, string>()
+      if (thumbnailFile && uploadedThumbnail) {
+        uploadedUrls.set(thumbnailFile.key, uploadedThumbnail)
+      }
+      otherFiles.forEach(({ key }, index) => {
+        const url = otherUploads.files[index]?.url
+        if (url) uploadedUrls.set(key, url)
+      })
 
       return merchantApi.post<{ products: MerchantProduct[] }>(
         session.merchant.id,
@@ -247,20 +429,38 @@ export const ProductCreateModal = ({
             shipping_profile_id:
               shippingProfileId === "default" ? undefined : shippingProfileId,
             category_ids: categoryIds,
+            ...(draftedDescription !== null && description.trim() !== "" && {
+              metadata: {
+                description_source:
+                  description.trim() === draftedDescription.trim()
+                    ? "ai"
+                    : "ai_edited",
+              },
+            }),
             options: productOptions,
-            variants: variants.map((variant) => ({
-              title: variant.title.trim(),
-              sku: variant.sku.trim() || undefined,
-              manage_inventory: variant.manageInventory,
-              allow_backorder: variant.allowBackorder,
-              options: variant.options,
-              prices: Object.entries(variant.prices)
-                .filter(([, amount]) => amount.trim() !== "")
-                .map(([currencyCode, amount]) => ({
-                  amount: Number(amount),
-                  currency_code: currencyCode,
-                })),
-            })),
+            variants: variants.map((variant) => {
+              const imageUrls = hasVariants
+                ? variant.imageKeys.flatMap((key) => {
+                    const url = uploadedUrls.get(key)
+                    return url ? [url] : []
+                  })
+                : []
+
+              return {
+                title: variant.title.trim(),
+                sku: variant.sku.trim() || undefined,
+                manage_inventory: variant.manageInventory,
+                allow_backorder: variant.allowBackorder,
+                options: variant.options,
+                prices: Object.entries(variant.prices)
+                  .filter(([, amount]) => amount.trim() !== "")
+                  .map(([currencyCode, amount]) => ({
+                    amount: Number(amount),
+                    currency_code: currencyCode,
+                  })),
+                ...(imageUrls.length > 0 && { image_urls: imageUrls }),
+              }
+            }),
           }],
         }
       )
@@ -328,7 +528,8 @@ export const ProductCreateModal = ({
         hasVariants,
         options,
         current,
-        currencyCodes
+        currencyCodes,
+        photoLinks
       ))
     }
     setError("")
@@ -373,19 +574,48 @@ export const ProductCreateModal = ({
     }
 
     setError("")
-    setMediaFiles((current) => {
-      const hasThumbnail = current.some(({ isThumbnail }) => isThumbnail)
+    const hasThumbnail = mediaFiles.some(({ isThumbnail }) => isThumbnail)
+    const nextMedia = [
+      ...mediaFiles,
+      ...files.map((file, index) => ({
+        key: `${file.name}-${file.size}-${file.lastModified}-${Date.now()}-${index}`,
+        file,
+        previewUrl: URL.createObjectURL(file),
+        isThumbnail: !hasThumbnail && index === 0,
+      })),
+    ]
+    setMediaFiles(nextMedia)
 
-      return [
-        ...current,
-        ...files.map((file, index) => ({
-          key: `${file.name}-${file.size}-${file.lastModified}-${Date.now()}-${index}`,
-          file,
-          previewUrl: URL.createObjectURL(file),
-          isThumbnail: !hasThumbnail && index === 0,
-        })),
-      ]
+    if (!photoDraftsEnabled || draftFromPhotos.isPending) return
+
+    // Drafts automatically for a new product, and drafts again when photos
+    // are added before the merchant has edited any drafted text, so a second
+    // colour updates the title instead of leaving it on the first one.
+    const draftPhotos = selectDraftPhotos(nextMedia)
+    const isFirstDraft = !title.trim() && !photoDraft?.photo_usable
+    const addsDraftPhotos = draftPhotos.some(({ key }) => {
+      return !draftedPhotoKeys.includes(key)
     })
+    if (
+      isFirstDraft ||
+      (photoDraft?.photo_usable && draftTextUntouched && addsDraftPhotos)
+    ) {
+      draftFromPhotos.mutate(draftPhotos)
+    }
+  }
+
+  const toggleVariantImage = (variantKey: string, imageKey: string) => {
+    setVariants((current) => current.map((variant) => {
+      if (variant.key !== variantKey) return variant
+
+      return {
+        ...variant,
+        imageKeysEdited: true,
+        imageKeys: variant.imageKeys.includes(imageKey)
+          ? variant.imageKeys.filter((key) => key !== imageKey)
+          : [...variant.imageKeys, imageKey],
+      }
+    }))
   }
 
   const removeMedia = (key: string) => {
@@ -456,8 +686,80 @@ export const ProductCreateModal = ({
                   <Text size="large" weight="plus">Product details</Text>
                   <Text size="small" className="text-ui-fg-subtle">
                     Add the information and media customers need to choose this product.
+                    {photoDraftsEnabled && " Add a photo and the details are drafted from it."}
                   </Text>
                 </div>
+                {draftFromPhotos.isPending && (
+                  <div className="flex items-center gap-2">
+                    <Spinner className="text-ui-fg-interactive animate-spin" />
+                    <Text size="small" className="text-ui-fg-subtle">
+                      {draftFromPhotos.variables && draftFromPhotos.variables.length > 1
+                        ? `Drafting details from ${draftFromPhotos.variables.length} photos...`
+                        : "Drafting details from your photo..."}
+                    </Text>
+                  </div>
+                )}
+                {photoDraft && !draftFromPhotos.isPending && (
+                  <InlineTip
+                    variant={photoDraft.photo_usable && !photoDraft.mixed_products ? "info" : "warning"}
+                    label={
+                      !photoDraft.photo_usable
+                        ? "Photo unclear"
+                        : photoDraft.mixed_products
+                          ? "Different products"
+                          : "Drafted from photos"
+                    }
+                  >
+                    {!photoDraft.photo_usable ? (
+                      photoDraft.retake_advice ?? "Try a brighter, closer photo of the product."
+                    ) : photoDraft.mixed_products ? (
+                      "These photos look like different products. Remove the photos that aren't this product, then draft again, or create a separate product for each."
+                    ) : (
+                      <>
+                        Check every detail and add a price before publishing.
+                        {photoDraft.notes_for_merchant && ` ${photoDraft.notes_for_merchant}`}
+                        {suggestedOptions.length > 0 && (
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <span>
+                              Options seen in the photos: {suggestedOptions
+                                .map((option) => `${option.title} (${option.values})`)
+                                .join("; ")}.
+                            </span>
+                            {suggestedOptionsInUse ? (
+                              <span>Added below. Each variant gets its matching photo.</span>
+                            ) : hasFilledOptions && !optionsHeldByDraft ? (
+                              <span>Your own options were kept.</span>
+                            ) : (
+                              <Button
+                                type="button"
+                                size="small"
+                                variant="secondary"
+                                onClick={() => applyDraftOptions(suggestedOptions)}
+                              >
+                                Use these options
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {photosAddedSinceDraft && (
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <span>
+                          You've added photos since this draft. Updating keeps anything you've changed.
+                        </span>
+                        <Button
+                          type="button"
+                          size="small"
+                          variant="secondary"
+                          onClick={() => draftFromPhotos.mutate(selectDraftPhotos(mediaFiles))}
+                        >
+                          <Sparkles /> Update from all photos
+                        </Button>
+                      </div>
+                    )}
+                  </InlineTip>
+                )}
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="flex flex-col gap-2 md:col-span-2">
                     <Label htmlFor="create-product-title">Title</Label>
@@ -507,6 +809,18 @@ export const ProductCreateModal = ({
                           event.currentTarget.value = ""
                         }}
                       />
+                      {photoDraftsEnabled && mediaFiles.length > 0 && (
+                        <Button
+                          type="button"
+                          size="small"
+                          variant="secondary"
+                          disabled={draftFromPhotos.isPending}
+                          isLoading={draftFromPhotos.isPending}
+                          onClick={() => draftFromPhotos.mutate(selectDraftPhotos(mediaFiles))}
+                        >
+                          <Sparkles /> Draft from photos
+                        </Button>
+                      )}
                       <Button
                         type="button"
                         size="small"
@@ -679,6 +993,41 @@ export const ProductCreateModal = ({
                       ))}
                       <div className="flex items-center gap-2"><Checkbox checked={variant.manageInventory} onCheckedChange={(checked) => setVariants((current) => current.map((entry) => entry.key === variant.key ? { ...entry, manageInventory: checked === true } : entry))} /><Text size="small">Manage inventory</Text></div>
                       <div className="flex items-center gap-2"><Checkbox checked={variant.allowBackorder} onCheckedChange={(checked) => setVariants((current) => current.map((entry) => entry.key === variant.key ? { ...entry, allowBackorder: checked === true } : entry))} /><Text size="small">Allow backorder</Text></div>
+                      {hasVariants && mediaFiles.length > 0 && (
+                        <div className="flex flex-col gap-2 md:col-span-2 xl:col-span-4">
+                          <div>
+                            <Text size="small" weight="plus">Photos for this variant</Text>
+                            <Text size="xsmall" className="text-ui-fg-subtle">
+                              {variant.imageKeys.some((key) => mediaFiles.some((media) => media.key === key))
+                                ? `Shoppers who pick ${variant.title} see these photos.`
+                                : "None picked: shoppers see all the product's photos."}
+                            </Text>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {mediaFiles.map((media) => {
+                              const selected = variant.imageKeys.includes(media.key)
+
+                              return (
+                                <button
+                                  key={media.key}
+                                  type="button"
+                                  aria-pressed={selected}
+                                  aria-label={`${selected ? "Remove" : "Use"} ${media.file.name} for ${variant.title}`}
+                                  className={clx(
+                                    "rounded-lg border-2 p-0.5 transition-opacity",
+                                    selected
+                                      ? "border-ui-border-interactive"
+                                      : "border-transparent opacity-50 hover:opacity-100"
+                                  )}
+                                  onClick={() => toggleVariantImage(variant.key, media.key)}
+                                >
+                                  <Avatar src={media.previewUrl} fallback="Image" variant="squared" size="large" />
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

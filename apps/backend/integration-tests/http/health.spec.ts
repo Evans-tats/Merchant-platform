@@ -703,6 +703,21 @@ medusaIntegrationTestRunner({
           api.get("/admin/products", { headers: staffHeadersA })
         ).rejects.toMatchObject({ response: { status: 403 } })
 
+        const topbarLayout = await api.get(
+          "/admin/layouts/topbar/configuration",
+          { headers: staffHeadersA }
+        )
+
+        expect(topbarLayout.status).toBe(200)
+
+        await expect(
+          api.post(
+            "/admin/layouts/topbar/configuration",
+            { is_default: true, configuration: { widgets: {} } },
+            { headers: staffHeadersA }
+          )
+        ).rejects.toMatchObject({ response: { status: 403 } })
+
         await expect(
           api.get(`/admin/merchants/${merchantB.merchant.id}`, {
             headers: staffHeadersA,

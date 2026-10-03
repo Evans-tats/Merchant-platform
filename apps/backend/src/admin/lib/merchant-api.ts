@@ -1,5 +1,7 @@
 import Medusa from "@medusajs/js-sdk"
 
+import { readNdjson } from "./ndjson"
+
 export type MerchantRole = "owner" | "admin" | "staff"
 
 export type MerchantIdentity = {
@@ -72,6 +74,46 @@ export type MerchantTheme = {
   }
   is_active: boolean
 }
+
+export type MerchantProductPhotoDraft = {
+  photo_usable: boolean
+  retake_advice: string | null
+  title: string
+  description: string
+  category_id: string | null
+  options: Array<{ title: string; values: string[] }>
+  visible_brand: string | null
+  confidence: "high" | "medium" | "low"
+  notes_for_merchant: string
+  mixed_products: boolean
+  // Which option values each photo shows; index is the photo's position in
+  // the request, starting at 1.
+  photos: Array<{
+    index: number
+    option_values: Array<{ option: string; value: string }>
+  }>
+}
+
+export type MerchantAssistantSession = {
+  id: string
+  title: string | null
+  created_at: string
+}
+
+export type MerchantAssistantMessage = {
+  id: string
+  role: "user" | "assistant"
+  content: string
+  created_at: string
+}
+
+export type MerchantAssistantEvent =
+  | { type: "session_id"; session_id: string }
+  | { type: "text"; content: string }
+  | { type: "tool_call"; id: string; tool: string }
+  | { type: "tool_result"; id: string; tool: string; ok: boolean }
+  | { type: "done" }
+  | { type: "error"; message: string }
 
 export type MerchantPaymentConfig = {
   id: string
@@ -327,6 +369,60 @@ export type MerchantCustomerSegmentListResponse = {
   count: number
   limit: number
   offset: number
+}
+
+export type MerchantCollection = {
+  id: string
+  title: string
+  handle: string
+  product_count: number
+  created_at: string
+  updated_at: string
+}
+
+export type MerchantCollectionProduct = {
+  id: string
+  title: string
+  handle: string
+  status: string
+  thumbnail: string | null
+}
+
+export type MerchantCollectionDetail = MerchantCollection & {
+  products: MerchantCollectionProduct[]
+}
+
+export type MerchantCollectionListResponse = {
+  collections: MerchantCollection[]
+  count: number
+}
+
+export type MerchantCategory = {
+  id: string
+  name: string
+  handle: string
+  description: string
+  is_active: boolean
+  is_internal: boolean
+  rank: number
+  parent_category_id: string | null
+  product_count: number
+  created_at: string
+  updated_at: string
+}
+
+// Listed parents first, then their subcategories by rank.
+export type MerchantCategoryListItem = MerchantCategory & { depth: number }
+
+export type MerchantCategoryDetail = MerchantCategory & {
+  path: Array<{ id: string; name: string }>
+  category_children: Array<{ id: string; name: string; handle: string }>
+  products: MerchantCollectionProduct[]
+}
+
+export type MerchantCategoryListResponse = {
+  product_categories: MerchantCategoryListItem[]
+  count: number
 }
 
 export type MerchantInventoryLevel = {
@@ -662,10 +758,79 @@ export const merchantApi = {
     )
   },
 
+  draftFromPhotos: (merchantId: string, photos: File[]) => {
+    const body = new FormData()
+    photos.forEach((photo) => body.append("photos", photo))
+
+    return sdk.client.fetch<{ draft: MerchantProductPhotoDraft }>(
+      `/admin/merchants/${merchantId}/product-drafts`,
+      {
+        method: "POST",
+        headers: { "content-type": null },
+        body,
+      }
+    )
+  },
+
   delete: <T>(merchantId: string, suffix: string) =>
     sdk.client.fetch<T>(`/admin/merchants/${merchantId}${suffix}`, {
       method: "DELETE",
     }),
+
+  assistant: {
+    status: (merchantId: string) =>
+      sdk.client.fetch<{ enabled: boolean }>(
+        `/admin/merchants/${merchantId}/assistant`,
+        { method: "GET" }
+      ),
+
+    sessions: async (merchantId: string) => {
+      const response = await sdk.client.fetch<{
+        sessions: MerchantAssistantSession[]
+      }>(`/admin/merchants/${merchantId}/assistant/sessions`, {
+        method: "GET",
+      })
+
+      return response.sessions
+    },
+
+    session: async (merchantId: string, sessionId: string) => {
+      const response = await sdk.client.fetch<{
+        session: MerchantAssistantSession & {
+          messages: MerchantAssistantMessage[]
+        }
+      }>(`/admin/merchants/${merchantId}/assistant/sessions/${sessionId}`, {
+        method: "GET",
+      })
+
+      return response.session
+    },
+
+    // Sends one message and reports the streamed reply as it arrives. A
+    // non-JSON accept header makes the SDK hand back the raw response.
+    send: async (
+      merchantId: string,
+      body: { message: string; session_id?: string },
+      onEvent: (event: MerchantAssistantEvent) => void
+    ) => {
+      const response = await sdk.client.fetch<Response>(
+        `/admin/merchants/${merchantId}/assistant`,
+        {
+          method: "POST",
+          headers: { accept: "application/x-ndjson" },
+          body,
+        }
+      )
+
+      if (!response.body) {
+        throw new Error("The assistant didn't send a reply")
+      }
+
+      await readNdjson(response.body, (value) =>
+        onEvent(value as MerchantAssistantEvent)
+      )
+    },
+  },
 }
 
 export function errorMessage(error: unknown): string {

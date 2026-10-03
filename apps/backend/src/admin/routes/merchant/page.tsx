@@ -6,6 +6,7 @@ import {
   CheckMini,
   House,
   ShoppingCart,
+  Sparkles,
   Tag,
   Users,
 } from "@medusajs/icons"
@@ -542,6 +543,12 @@ const MerchantHomeContent = ({ session }: { session: MerchantSession }) => {
                   ))}
                 </Select.Content>
               </Select>
+              <Button size="small" variant="secondary" asChild>
+                <Link to="/merchant/assistant">
+                  <Sparkles />
+                  Ask the assistant
+                </Link>
+              </Button>
               <Button size="small" variant="secondary" asChild>
                 <Link to="/merchant-products">Manage products</Link>
               </Button>
