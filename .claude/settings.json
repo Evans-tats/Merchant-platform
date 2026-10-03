@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "medusa": {
+      "source": {
+        "source": "github",
+        "repo": "medusajs/medusa-agent-skills"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "medusa-dev@medusa": true
+  }
+}
