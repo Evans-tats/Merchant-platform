@@ -10,6 +10,7 @@
     ]
   },
   "deploy": {
+    "startCommand": "/app/node_modules/.bin/medusa start",
     "preDeployCommand": "/app/node_modules/.bin/medusa db:migrate",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 300,
