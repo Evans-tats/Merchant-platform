@@ -43,3 +43,32 @@ export const canCancelMerchantOrder = (order: MerchantOrder) => {
 
 export const formatOrderWorkflowStatus = (status: string) =>
   status.replace(/_/g, " ")
+
+type MerchantPayment = NonNullable<
+  NonNullable<MerchantOrder["payment_collections"]>[number]["payments"]
+>[number]
+
+export type MerchantPaymentState = "paid" | "to_confirm" | "canceled"
+
+// A manual payment, such as cash on delivery or M-Pesa sent by hand, is
+// authorized at checkout and only counts as paid once the merchant confirms
+// the money arrived ("Mark as paid", which captures it).
+export const merchantPaymentState = (
+  payment: MerchantPayment
+): MerchantPaymentState => {
+  if (payment.canceled_at) {
+    return "canceled"
+  }
+
+  return payment.captured_at ? "paid" : "to_confirm"
+}
+
+// The amount still to confirm, after any part captured earlier.
+export const amountToConfirm = (payment: MerchantPayment) => {
+  const captured = (payment.captures ?? []).reduce(
+    (sum, capture) => sum + Number(capture?.amount ?? 0),
+    0
+  )
+
+  return Math.max(0, Math.round((Number(payment.amount) - captured) * 100) / 100)
+}

@@ -16,6 +16,7 @@ import MpesaRegistryModuleService from "../../modules/mpesa-registry/service"
 import {
   maskMsisdn,
   MAX_ONBOARDING_PRODUCTS,
+  isReservedStoreSlug,
   type MpesaAccountType,
   type OnboardingAnswers,
   type OnboardingChannel,
@@ -500,7 +501,7 @@ export const prepareMpesaOnboardingCompletionStep = createStep(
           { take: 1 }
         ),
       ])
-      if (!merchant && !domain) break
+      if (!isReservedStoreSlug(slug) && !merchant && !domain) break
       slug = `${baseSlug}-${suffix}`
     }
 

@@ -13,6 +13,11 @@ const BACKEND_URL = process.env.NEXT_PUBLIC_MEDUSA_BACKEND_URL
 const DEFAULT_REGION = process.env.NEXT_PUBLIC_DEFAULT_REGION || "ke"
 const DEFAULT_STOREFRONT_HOSTNAME =
   process.env.STOREFRONT_DEFAULT_HOSTNAME
+// For a deployment without a wildcard domain: every store shares this app's
+// one address, ?shop=<store hostname> picks the store, and the hostname
+// cookie keeps it for the rest of the visit.
+const SHARED_HOST = process.env.STOREFRONT_SHARED_HOST === "true"
+const SHOP_PARAM = "shop"
 
 const regionMapCache = new Map<
   string,
@@ -23,6 +28,17 @@ const regionMapCache = new Map<
 >()
 
 function requestHostname(request: NextRequest): string {
+  if (SHARED_HOST) {
+    return (
+      request.nextUrl.searchParams.get(SHOP_PARAM) ||
+      request.cookies.get(STOREFRONT_TENANT_COOKIES.hostname)?.value ||
+      DEFAULT_STOREFRONT_HOSTNAME ||
+      ""
+    )
+      .trim()
+      .toLowerCase()
+  }
+
   const forwardedHost = request.headers
     .get("x-forwarded-host")
     ?.split(",")[0]

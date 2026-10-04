@@ -11,6 +11,7 @@ import {
 
 import { MERCHANT_MODULE } from "../../src/modules/merchant"
 import { runStoreAssistantTool } from "../../src/services/store-assistant/tools"
+import type { ResolvedMerchantId } from "../../src/services/tenant-resolution"
 import { createMerchantDeliveryMethodWorkflow } from "../../src/workflows/merchant-delivery"
 import { recordMerchantActivityWorkflow } from "../../src/workflows/merchant-insights"
 import { provisionMerchantWorkflow } from "../../src/workflows/provision-merchant"
@@ -84,8 +85,13 @@ medusaIntegrationTestRunner({
             shippingOption: deliveryOptions[0],
             context: {
               container,
-              merchant_id: result.merchant.id,
+              merchant_id: result.merchant.id as ResolvedMerchantId,
               sales_channel_id: result.salesChannel.id,
+              role: "owner" as const,
+              // These read tools never suggest changes.
+              propose: async () => {
+                throw new Error("Unexpected suggestion")
+              },
             },
           }
         }
@@ -286,6 +292,83 @@ medusaIntegrationTestRunner({
           merchantB.context
         )
         expect(JSON.stringify(otherCustomers.result)).not.toContain(buyer.id)
+
+        // The customers page gets what each customer spent: 2 x 1100 plus
+        // 300 delivery per order, with the canceled order left out.
+        const customersPage = await api.get(
+          `/admin/merchants/${merchantA.merchant.id}/customers`,
+          { headers: merchantA.headers }
+        )
+        expect(customersPage.data.customers).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              customer_id: buyer.id,
+              placed_order_count: 2,
+              total_spent: 5000,
+              currency_code: "kes",
+            }),
+            expect.objectContaining({
+              email: "guest-buyer@example.test",
+              order_count: 1,
+              placed_order_count: 0,
+              total_spent: 0,
+            }),
+          ])
+        )
+
+        // One customer in full, without contact details.
+        const amina = await runStoreAssistantTool(
+          "get_customer_details",
+          { customer_id: buyer.id },
+          merchantA.context
+        )
+        expect(amina.error).toBeUndefined()
+        expect(amina.result).toMatchObject({
+          customer_id: buyer.id,
+          name: "Amina Otieno",
+          email: "a***@example.test",
+          placed_order_count: 2,
+          total_spent: 5000,
+          average_order_value: 2500,
+          currency_code: "kes",
+          top_products: [{ name: "Kikoi", quantity: 4 }],
+        })
+        expect(JSON.stringify(amina.result)).not.toContain("+254")
+        expect(JSON.stringify(amina.result)).not.toContain("amina.otieno@")
+        await expect(
+          runStoreAssistantTool(
+            "get_customer_details",
+            { customer_id: buyer.id },
+            merchantB.context
+          )
+        ).resolves.toEqual({ error: "Merchant customer not found" })
+
+        // The analysis counts placed orders only.
+        const analysis = await runStoreAssistantTool(
+          "analyze_customers",
+          { group: "repeat" },
+          merchantA.context
+        )
+        expect(analysis.result).toMatchObject({
+          customers: 2,
+          buyers: 1,
+          no_placed_orders: 1,
+          revenue: 5000,
+          average_order_value: 2500,
+          currency_code: "kes",
+          group: {
+            total: 1,
+            customers: [
+              { customer_id: buyer.id, placed_orders: 2, total_spent: 5000 },
+            ],
+          },
+        })
+        const emptyAnalysis = await runStoreAssistantTool(
+          "analyze_customers",
+          {},
+          emptyMerchant.context
+        )
+        expect(emptyAnalysis.result).toMatchObject({ customers: 0, revenue: 0 })
 
         // Delivery methods are the merchant's own.
         const delivery = await runStoreAssistantTool(

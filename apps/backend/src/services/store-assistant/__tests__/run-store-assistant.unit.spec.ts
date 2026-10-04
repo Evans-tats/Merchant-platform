@@ -1,12 +1,15 @@
 const runStoreAssistantTool = jest.fn()
+const storeAssistantFunctionDeclarations = jest.fn(() => [
+  { name: "get_sales_summary", description: "Sales", parametersJsonSchema: {} },
+])
 
 jest.mock("../tools", () => ({
   runStoreAssistantTool: (...args: unknown[]) => runStoreAssistantTool(...args),
-  storeAssistantFunctionDeclarations: () => [
-    { name: "get_sales_summary", description: "Sales", parametersJsonSchema: {} },
-  ],
+  storeAssistantFunctionDeclarations: (...args: unknown[]) =>
+    storeAssistantFunctionDeclarations(...(args as [])),
 }))
 
+import type { ResolvedMerchantId } from "../../tenant-resolution"
 import {
   runStoreAssistant,
   StoreAssistantError,
@@ -27,8 +30,10 @@ async function* streamOf(...chunks: Chunk[]) {
 
 const toolContext = {
   container: {} as never,
-  merchant_id: "mer_a",
+  merchant_id: "mer_a" as ResolvedMerchantId,
   sales_channel_id: "sc_a",
+  role: "staff" as const,
+  propose: jest.fn(),
 }
 
 const run = (
@@ -106,6 +111,8 @@ describe("runStoreAssistant", () => {
     ])
     expect(followUp.config.systemInstruction).toBe("You are the store assistant")
     expect(followUp.config.thinkingConfig).toEqual({ thinkingLevel: "LOW" })
+    // Only the tools this member may use are offered.
+    expect(storeAssistantFunctionDeclarations).toHaveBeenCalledWith("staff")
   })
 
   it("sends earlier messages as user and model turns", async () => {

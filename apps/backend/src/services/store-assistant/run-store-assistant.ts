@@ -9,6 +9,7 @@ import type {
 } from "@google/genai" with { "resolution-mode": "import" }
 
 import type { AssistantHistoryMessage } from "../../workflows/store-assistant"
+import type { StoreAssistantProposal } from "./proposals"
 import {
   runStoreAssistantTool,
   storeAssistantFunctionDeclarations,
@@ -28,6 +29,7 @@ export type StoreAssistantEvent =
   | { type: "text"; content: string }
   | { type: "tool_call"; id: string; tool: string }
   | { type: "tool_result"; id: string; tool: string; ok: boolean }
+  | { type: "proposal"; proposal: StoreAssistantProposal }
 
 export class StoreAssistantError extends Error {
   reason: "not_configured" | "unavailable"
@@ -84,7 +86,9 @@ export async function runStoreAssistant(input: {
   const client = input.client ?? (await createGeminiClient(apiKey!))
   const models = input.models ?? DEFAULT_ASSISTANT_MODELS
   const contents = input.history.map(toContent)
-  const functionDeclarations = storeAssistantFunctionDeclarations()
+  const functionDeclarations = storeAssistantFunctionDeclarations(
+    input.toolContext.role
+  )
   const toolsUsed: string[] = []
   let modelIndex = 0
   let text = ""

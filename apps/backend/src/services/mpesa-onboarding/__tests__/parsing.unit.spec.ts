@@ -1,6 +1,7 @@
 import { messagesFor } from "../messages"
 import {
   isNo,
+  isReservedStoreSlug,
   isYes,
   maskMsisdn,
   normalizeMsisdn,
@@ -69,6 +70,12 @@ describe("M-PESA onboarding parsing", () => {
     expect(toTitleCase("MAMA NJERI GROCERIES")).toBe("Mama Njeri Groceries")
     expect(slugify("Mama Njeri's Groceries!")).toBe("mama-njeri-s-groceries")
     expect(slugify("x".repeat(60)).length).toBeLessThanOrEqual(40)
+  })
+
+  it("keeps platform subdomains out of store slugs", () => {
+    expect(isReservedStoreSlug(slugify("API"))).toBe(true)
+    expect(isReservedStoreSlug("www")).toBe(true)
+    expect(isReservedStoreSlug("api-shop")).toBe(false)
   })
 
   it("has the same messages in English and Kiswahili", () => {

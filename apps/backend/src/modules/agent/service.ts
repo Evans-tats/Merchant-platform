@@ -1,6 +1,7 @@
 import { MedusaService } from "@medusajs/framework/utils"
 
 import AgentMessage from "./models/agent-message"
+import AgentProposal from "./models/agent-proposal"
 import AgentSession from "./models/agent-session"
 
 // Conversation storage shared by every admin agent. The agent runtime lives
@@ -8,6 +9,7 @@ import AgentSession from "./models/agent-session"
 class AgentModuleService extends MedusaService({
   AgentSession,
   AgentMessage,
+  AgentProposal,
 }) {}
 
 export default AgentModuleService

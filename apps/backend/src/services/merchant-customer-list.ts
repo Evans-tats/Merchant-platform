@@ -1,3 +1,5 @@
+import { isPlacedOrder } from "./merchant-home"
+
 export type MerchantCustomerSource = {
   id: string
   email?: string | null
@@ -13,6 +15,9 @@ export type MerchantCustomerOrderSource = {
   id: string
   customer_id?: string | null
   email?: string | null
+  status?: string | null
+  currency_code?: string | null
+  total?: number | null
   created_at?: Date | string
   customer?: MerchantCustomerSource | null
 }
@@ -38,6 +43,12 @@ export type MerchantCustomerListItem = {
   phone: string | null
   has_account: boolean
   order_count: number
+  // Orders that weren't canceled or left as drafts, and what they came to.
+  placed_order_count: number
+  total_spent: number
+  // The currency of the placed orders. Null when there are none, or when
+  // they're in more than one currency and total_spent mixes them.
+  currency_code: string | null
   first_order_at: string | null
   last_order_at: string | null
   created_at: string | null
@@ -90,6 +101,26 @@ function profileField(
   return stringValue(profile?.[field])
 }
 
+// Counts the order towards what the customer spent, like the home page
+// counts sales: canceled and draft orders don't count.
+function addPlacedOrder(
+  customer: MerchantCustomerListItem,
+  order: MerchantCustomerOrderSource
+) {
+  if (!isPlacedOrder({ status: order.status ?? "" })) {
+    return
+  }
+
+  const currency = stringValue(order.currency_code)?.toLowerCase() ?? null
+
+  customer.currency_code =
+    customer.placed_order_count === 0 || customer.currency_code === currency
+      ? currency
+      : null
+  customer.placed_order_count += 1
+  customer.total_spent += Number(order.total ?? 0)
+}
+
 export function buildMerchantCustomerList(input: {
   orders?: MerchantCustomerOrderSource[]
   customerProfiles?: MerchantCustomerProfileSource[]
@@ -125,6 +156,9 @@ export function buildMerchantCustomerList(input: {
         profileField(profile.profile, "phone") ?? stringValue(customer?.phone),
       has_account: customer?.has_account === true,
       order_count: 0,
+      placed_order_count: 0,
+      total_spent: 0,
+      currency_code: null,
       first_order_at: null,
       last_order_at: null,
       created_at: createdAt,
@@ -141,7 +175,7 @@ export function buildMerchantCustomerList(input: {
     const existing = customers.get(key)
 
     if (!existing) {
-      customers.set(key, {
+      const created: MerchantCustomerListItem = {
         id: customerId ?? key,
         customer_id: customerId,
         merchant_profile_id: null,
@@ -153,10 +187,16 @@ export function buildMerchantCustomerList(input: {
         phone: stringValue(customer?.phone),
         has_account: customer?.has_account === true,
         order_count: 1,
+        placed_order_count: 0,
+        total_spent: 0,
+        currency_code: null,
         first_order_at: orderCreatedAt,
         last_order_at: orderCreatedAt,
         created_at: customerCreatedAt ?? orderCreatedAt,
-      })
+      }
+
+      addPlacedOrder(created, order)
+      customers.set(key, created)
       continue
     }
 
@@ -167,6 +207,7 @@ export function buildMerchantCustomerList(input: {
     existing.phone ??= stringValue(customer?.phone)
     existing.has_account ||= customer?.has_account === true
     existing.order_count += 1
+    addPlacedOrder(existing, order)
     existing.first_order_at = earlier(existing.first_order_at, orderCreatedAt)
     existing.last_order_at = later(existing.last_order_at, orderCreatedAt)
     existing.created_at = earlier(

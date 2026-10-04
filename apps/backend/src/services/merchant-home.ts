@@ -1,3 +1,5 @@
+import { storefrontUrl } from "./storefront-url"
+
 export type MerchantHomeRange = "today" | "7d" | "30d"
 
 export type MerchantHomePeriod = {
@@ -404,8 +406,10 @@ export const buildMerchantHome = ({
       },
       {
         id: "payments",
-        label: "M-Pesa payments to review",
-        description: "Orders awaiting capture or payment action",
+        // Payments are manual until M-Pesa takes them, so the merchant
+        // confirms each one by marking the order as paid.
+        label: "Payments to confirm",
+        description: "Orders where you haven't confirmed receiving the money yet",
         count: paymentAttention,
         to: "/merchant-orders",
       },
@@ -444,7 +448,7 @@ export const buildMerchantHome = ({
         completedHealthChecks === healthChecks.length
           ? "live"
           : "needs_setup",
-      storefront_url: domainReady ? `https://${primaryDomain!.hostname}` : null,
+      storefront_url: domainReady ? storefrontUrl(primaryDomain!.hostname) : null,
       completed: completedHealthChecks,
       total: healthChecks.length,
       checks: healthChecks,

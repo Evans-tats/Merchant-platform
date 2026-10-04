@@ -200,7 +200,7 @@ aside a.bg-ui-bg-base p {
   color: var(--fg-interactive);
 }
 
-body aside a[href="/app/promotions"],
+body aside a[href="/app/campaigns"],
 body aside a[href="/app/price-lists"],
 body aside a[href="/app/settings"],
 body aside a[href="/app/collections"],

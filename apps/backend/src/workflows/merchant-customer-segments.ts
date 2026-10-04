@@ -2,6 +2,7 @@ import { Modules } from "@medusajs/framework/utils"
 import {
   createWorkflow,
   transform,
+  when,
   WorkflowResponse,
 } from "@medusajs/framework/workflows-sdk"
 import {
@@ -51,6 +52,8 @@ type MerchantCustomerSegmentScope = MerchantScopeInput & {
 export type CreateMerchantCustomerSegmentInput = MerchantScopeInput & {
   actor_id?: string
   segment: MerchantCustomerSegmentInput
+  // Added with the segment, so a refused customer leaves no empty segment.
+  customer_ids?: string[]
 }
 
 export type UpdateMerchantCustomerSegmentInput =
@@ -107,6 +110,10 @@ export const createMerchantCustomerSegmentWorkflow = createWorkflow(
       merchant_id: scope.merchant_id,
       name: input.segment.name,
     })
+    const customerIds = validateMerchantCustomersStep({
+      merchant_id: scope.merchant_id,
+      customer_ids: input.customer_ids,
+    })
     const groupsInput = transform({ input, scope }, ({ input, scope }) => ({
       customersData: [
         {
@@ -132,8 +139,25 @@ export const createMerchantCustomerSegmentWorkflow = createWorkflow(
 
     createRemoteLinkStep(links)
 
-    const segment = transform({ groups }, ({ groups }) =>
-      toMerchantCustomerSegment(groups[0])
+    when(
+      "add-customers-to-new-segment",
+      { customerIds },
+      ({ customerIds }) => customerIds.length > 0
+    ).then(() => {
+      const linkInput = transform(
+        { groups, customerIds },
+        ({ groups, customerIds }) => ({ id: groups[0].id, add: customerIds })
+      )
+
+      linkCustomersToCustomerGroupWorkflow.runAsStep({ input: linkInput })
+    })
+
+    const segment = transform(
+      { groups, customerIds },
+      ({ groups, customerIds }) => ({
+        ...toMerchantCustomerSegment(groups[0]),
+        customer_count: customerIds.length,
+      })
     )
 
     return new WorkflowResponse(segment)

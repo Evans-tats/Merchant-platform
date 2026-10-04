@@ -27,5 +27,5 @@ npx medusa db:migrate
 
 The merchant platform defines one-owner links for products, product
 categories, product collections, carts, orders, stock locations, sales
-channels, and shipping profiles. Run the migration command after deploying new
+channels, shipping profiles, customer groups, promotions, and campaigns. Run the migration command after deploying new
 link definitions so their link tables are synchronized before serving traffic.

@@ -35,6 +35,7 @@ export type ListMerchantCustomerSegmentsQuery = z.infer<
 export const CreateMerchantCustomerSegmentSchema = z.object({
   name: segmentName,
   description: segmentDescription,
+  customer_ids: z.array(z.string().min(1)).max(100).optional(),
 })
 
 export type CreateMerchantCustomerSegmentBody = z.infer<

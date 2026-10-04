@@ -10,8 +10,12 @@ import {
 import {
   Alert,
   Button,
+  Checkbox,
   Container,
   IconButton,
+  Input,
+  Label,
+  StatusBadge,
   Text,
   Textarea,
   clx,
@@ -19,12 +23,25 @@ import {
 } from "@medusajs/ui"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useRef, useState } from "react"
+import { Link } from "react-router-dom"
 
 import {
   MerchantPageHeader,
   MerchantPageSkeleton,
   MerchantRoute,
 } from "../../../components/merchant/merchant-page"
+import {
+  canApproveProposal,
+  proposalDoneLabel,
+  proposalDraft,
+  proposalEditKind,
+  proposalEdits,
+  proposalLink,
+  proposalRequest,
+  proposalResources,
+  proposalTitle,
+  type ProposalDraft,
+} from "../../../lib/assistant-proposals"
 import {
   parseAssistantText,
   plainAssistantText,
@@ -34,6 +51,8 @@ import {
   merchantApi,
   merchantQueryKeys,
   type MerchantAssistantEvent,
+  type MerchantAssistantProposal,
+  type MerchantAssistantProposalCustomer,
   type MerchantSession,
 } from "../../../lib/merchant-api"
 
@@ -44,6 +63,7 @@ type ChatMessage = {
   role: "user" | "assistant"
   content: string
   tools: Array<{ id: string; tool: string; status: ToolStatus }>
+  proposals: MerchantAssistantProposal[]
   error?: string
 }
 
@@ -57,9 +77,17 @@ const toolLabels: Record<string, string> = {
   get_order_details: "Read order details",
   list_customers: "Checked customers",
   list_customer_segments: "Checked customer segments",
+  get_customer_details: "Read customer details",
+  analyze_customers: "Checked customer spending",
   get_catalog_structure: "Checked categories and collections",
   list_delivery_methods: "Checked delivery methods",
   get_recent_activity: "Checked recent activity",
+  propose_order_note: "Suggested an order note",
+  propose_publish_product: "Suggested publishing a product",
+  propose_product_description: "Suggested a description",
+  propose_collection_products: "Suggested collection changes",
+  propose_segment_customers: "Suggested segment changes",
+  propose_create_segment: "Suggested a new segment",
 }
 
 const suggestions = [
@@ -110,6 +138,8 @@ const applyEvent = (
             : tool
         ),
       }
+    case "proposal":
+      return { ...message, proposals: [...message.proposals, event.proposal] }
     case "error":
       return { ...message, error: event.message }
     default:
@@ -179,12 +209,521 @@ const AssistantText = ({ text }: { text: string }) => (
   </div>
 )
 
+// A change the assistant suggested. Approve calls the change's own merchant
+// route with the member's login, then records the outcome in the chat.
+const SectionLabel = ({ children }: { children: string }) => (
+  <Text
+    size="xsmall"
+    leading="compact"
+    weight="plus"
+    className="text-ui-fg-subtle"
+  >
+    {children}
+  </Text>
+)
+
+const TextBlock = ({ text, muted }: { text: string; muted?: boolean }) => (
+  <div className="rounded-lg bg-ui-bg-subtle px-3 py-2">
+    <Text
+      size="small"
+      className={clx(
+        "whitespace-pre-wrap break-words",
+        muted && "text-ui-fg-subtle"
+      )}
+    >
+      {text}
+    </Text>
+  </div>
+)
+
+// Customers on a segment card, with checkboxes while the member edits.
+const CustomerList = ({
+  customers,
+  draft,
+  editing,
+  inputId,
+  onDraftChange,
+}: {
+  customers: MerchantAssistantProposalCustomer[]
+  draft: ProposalDraft
+  editing: boolean
+  inputId: string
+  onDraftChange: (draft: ProposalDraft) => void
+}) => (
+  <ul className="flex flex-col gap-y-2">
+    {customers.map((customer) => {
+      const checkboxId = `${inputId}-${customer.id}`
+
+      return (
+        <li key={customer.id} className="flex items-start gap-x-2">
+          {editing && (
+            <Checkbox
+              id={checkboxId}
+              checked={draft.customer_ids.includes(customer.id)}
+              onCheckedChange={(checked) =>
+                onDraftChange({
+                  ...draft,
+                  customer_ids:
+                    checked === true
+                      ? [...draft.customer_ids, customer.id]
+                      : draft.customer_ids.filter((id) => id !== customer.id),
+                })
+              }
+            />
+          )}
+          <div className="flex min-w-0 flex-col">
+            {editing ? (
+              <Label htmlFor={checkboxId} size="small" weight="plus">
+                {customer.name}
+              </Label>
+            ) : (
+              <Text size="small" leading="compact" weight="plus">
+                {customer.name}
+              </Text>
+            )}
+            {customer.email && customer.email !== customer.name && (
+              <Text size="xsmall" className="text-ui-fg-subtle">
+                {customer.email}
+              </Text>
+            )}
+          </div>
+        </li>
+      )
+    })}
+  </ul>
+)
+
+// The suggestion itself: the text to save, or the products or customers it
+// covers. While the card is open it shows the member's edits; afterwards,
+// what was applied.
+const ProposalBody = ({
+  proposal,
+  draft,
+  editing,
+  open,
+  inputId,
+  onDraftChange,
+}: {
+  proposal: MerchantAssistantProposal
+  draft: ProposalDraft
+  editing: boolean
+  open: boolean
+  inputId: string
+  onDraftChange: (draft: ProposalDraft) => void
+}) => {
+  const shown = open ? draft : proposalDraft(proposal)
+  const longText = proposal.action === "update_product_description"
+  const textField = editing ? (
+    <>
+      <label htmlFor={inputId} className="sr-only">
+        Edit the suggestion
+      </label>
+      <Textarea
+        id={inputId}
+        value={draft.text}
+        rows={longText ? 6 : 3}
+        maxLength={longText ? 5000 : 2000}
+        onChange={(event) =>
+          onDraftChange({ ...draft, text: event.target.value })
+        }
+      />
+    </>
+  ) : (
+    <TextBlock text={shown.text} />
+  )
+
+  switch (proposal.action) {
+    case "add_order_note":
+      return textField
+    case "publish_product":
+      return (
+        <Text size="small" className="text-ui-fg-subtle">
+          {`It's ${proposal.preview.status} now. Publishing lets shoppers find and buy it.`}
+        </Text>
+      )
+    case "update_product_description":
+      return (
+        <div className="flex flex-col gap-y-3">
+          <div className="flex flex-col gap-y-1.5">
+            <SectionLabel>
+              {proposal.status === "approved"
+                ? "New description"
+                : "Suggested description"}
+            </SectionLabel>
+            {textField}
+          </div>
+          {proposal.status !== "dismissed" && (
+            <div className="flex flex-col gap-y-1.5">
+              <SectionLabel>{open ? "Current description" : "Before"}</SectionLabel>
+              <TextBlock
+                muted
+                text={
+                  proposal.preview.current_description ?? "No description yet."
+                }
+              />
+            </div>
+          )}
+        </div>
+      )
+    case "add_collection_products": {
+      const products = editing
+        ? proposal.preview.products
+        : proposal.preview.products.filter(({ id }) =>
+            shown.product_ids.includes(id)
+          )
+
+      return (
+        <ul className="flex flex-col gap-y-2">
+          {products.map((product) => {
+            const checkboxId = `${inputId}-${product.id}`
+            const move =
+              product.current_collection && proposal.status !== "dismissed"
+                ? `${open ? "Moves" : "Moved"} out of "${product.current_collection}"`
+                : null
+
+            return (
+              <li key={product.id} className="flex items-start gap-x-2">
+                {editing && (
+                  <Checkbox
+                    id={checkboxId}
+                    checked={draft.product_ids.includes(product.id)}
+                    onCheckedChange={(checked) =>
+                      onDraftChange({
+                        ...draft,
+                        product_ids:
+                          checked === true
+                            ? [...draft.product_ids, product.id]
+                            : draft.product_ids.filter(
+                                (id) => id !== product.id
+                              ),
+                      })
+                    }
+                  />
+                )}
+                <div className="flex min-w-0 flex-col">
+                  {editing ? (
+                    <Label htmlFor={checkboxId} size="small" weight="plus">
+                      {product.title}
+                    </Label>
+                  ) : (
+                    <Text size="small" leading="compact" weight="plus">
+                      {product.title}
+                    </Text>
+                  )}
+                  {move && (
+                    <Text size="xsmall" className="text-ui-fg-subtle">
+                      {move}
+                    </Text>
+                  )}
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )
+    }
+    case "update_segment_customers": {
+      const { add, remove } = proposal.args
+      const done = proposal.status === "approved"
+      const byId = new Map(
+        proposal.preview.customers.map((customer) => [customer.id, customer])
+      )
+      // Labels only when the card both adds and removes.
+      const labelled = add.length > 0 && remove.length > 0
+      const sections = [
+        { label: done ? "Added" : "Add", ids: add },
+        { label: done ? "Removed" : "Remove", ids: remove },
+      ]
+
+      return (
+        <div className="flex flex-col gap-y-3">
+          {sections.map(({ label, ids }) => {
+            const customers = ids.flatMap((id) => {
+              const customer = byId.get(id)
+
+              return customer && (editing || shown.customer_ids.includes(id))
+                ? [customer]
+                : []
+            })
+
+            return customers.length ? (
+              <div key={label} className="flex flex-col gap-y-1.5">
+                {labelled && <SectionLabel>{label}</SectionLabel>}
+                <CustomerList
+                  customers={customers}
+                  draft={draft}
+                  editing={editing}
+                  inputId={inputId}
+                  onDraftChange={onDraftChange}
+                />
+              </div>
+            ) : null
+          })}
+        </div>
+      )
+    }
+    case "create_segment": {
+      const customers = editing
+        ? proposal.preview.customers
+        : proposal.preview.customers.filter(({ id }) =>
+            shown.customer_ids.includes(id)
+          )
+
+      return (
+        <div className="flex flex-col gap-y-3">
+          {editing ? (
+            <>
+              <div className="flex flex-col gap-y-1.5">
+                <Label htmlFor={`${inputId}-name`} size="small" weight="plus">
+                  Name
+                </Label>
+                <Input
+                  id={`${inputId}-name`}
+                  size="small"
+                  value={draft.name}
+                  maxLength={120}
+                  onChange={(event) =>
+                    onDraftChange({ ...draft, name: event.target.value })
+                  }
+                />
+              </div>
+              <div className="flex flex-col gap-y-1.5">
+                <Label
+                  htmlFor={`${inputId}-description`}
+                  size="small"
+                  weight="plus"
+                >
+                  Description
+                </Label>
+                <Textarea
+                  id={`${inputId}-description`}
+                  value={draft.text}
+                  rows={2}
+                  maxLength={500}
+                  onChange={(event) =>
+                    onDraftChange({ ...draft, text: event.target.value })
+                  }
+                />
+              </div>
+            </>
+          ) : shown.text ? (
+            <TextBlock text={shown.text} />
+          ) : null}
+          <div className="flex flex-col gap-y-1.5">
+            <SectionLabel>
+              {proposal.status === "approved" ? "Customers in it" : "Customers"}
+            </SectionLabel>
+            {customers.length ? (
+              <CustomerList
+                customers={customers}
+                draft={draft}
+                editing={editing}
+                inputId={inputId}
+                onDraftChange={onDraftChange}
+              />
+            ) : (
+              <Text size="small" className="text-ui-fg-subtle">
+                No customers yet. You can add them on the segment's page.
+              </Text>
+            )}
+          </div>
+        </div>
+      )
+    }
+  }
+}
+
+const ProposalCard = ({
+  merchantId,
+  proposal,
+  onChange,
+}: {
+  merchantId: string
+  proposal: MerchantAssistantProposal
+  onChange: (proposal: MerchantAssistantProposal) => void
+}) => {
+  const queryClient = useQueryClient()
+  const [draft, setDraft] = useState(() => proposalDraft(proposal))
+  const [editing, setEditing] = useState(false)
+  const [busy, setBusy] = useState<"approve" | "dismiss" | null>(null)
+  const open = proposal.status === "pending" || proposal.status === "failed"
+  const editable = proposalEditKind(proposal) !== null
+  // A publish card has nothing more to show once it's resolved.
+  const showBody = open || proposal.action !== "publish_product"
+  const link = proposalLink(proposal)
+  const inputId = `proposal-${proposal.id}`
+
+  const record = async (
+    body: Parameters<typeof merchantApi.assistant.resolveProposal>[2]
+  ) => {
+    try {
+      onChange(
+        await merchantApi.assistant.resolveProposal(merchantId, proposal.id, body)
+      )
+      return true
+    } catch (error) {
+      toast.error(`The chat couldn't save this. ${errorMessage(error)}`)
+      return false
+    }
+  }
+
+  const approve = async () => {
+    const request = proposalRequest(proposal, draft)
+    setBusy("approve")
+
+    try {
+      await merchantApi.post(merchantId, request.path, request.body)
+    } catch (error) {
+      const message = errorMessage(error)
+      if (!(await record({ status: "failed", error: message }))) {
+        onChange({ ...proposal, status: "failed", error: message })
+      }
+      setBusy(null)
+      return
+    }
+
+    setEditing(false)
+    await Promise.all(
+      proposalResources(proposal, draft).map((resource) =>
+        queryClient.invalidateQueries({
+          queryKey: merchantQueryKeys.resource(merchantId, resource),
+        })
+      )
+    )
+    // The change is made, so the card says so even if recording fails.
+    if (
+      !(await record({
+        status: "approved",
+        edits: proposalEdits(proposal, draft),
+      }))
+    ) {
+      onChange({ ...proposal, status: "approved", error: null })
+    }
+    setBusy(null)
+  }
+
+  const dismiss = async () => {
+    setBusy("dismiss")
+    await record({ status: "dismissed" })
+    setBusy(null)
+  }
+
+  return (
+    <div className="flex max-w-full flex-col rounded-2xl border border-ui-border-base bg-ui-bg-base md:max-w-[85%]">
+      <div className="flex flex-col gap-y-1 px-4 pt-3">
+        <div className="flex items-center justify-between gap-x-2">
+          <Text
+            size="xsmall"
+            leading="compact"
+            weight="plus"
+            className="text-ui-fg-muted"
+          >
+            Suggested change
+          </Text>
+          {proposal.status === "approved" && (
+            <StatusBadge color="green">{proposalDoneLabel(proposal)}</StatusBadge>
+          )}
+          {proposal.status === "dismissed" && (
+            <StatusBadge color="grey">Dismissed</StatusBadge>
+          )}
+          {proposal.status === "failed" && (
+            <StatusBadge color="red">Didn't work</StatusBadge>
+          )}
+        </div>
+        <Text size="small" leading="compact" weight="plus">
+          {proposalTitle(proposal)}
+        </Text>
+        {proposal.summary && (
+          <Text size="small" className="text-ui-fg-subtle">
+            {proposal.summary}
+          </Text>
+        )}
+      </div>
+
+      {showBody && (
+        <div className="px-4 py-3">
+          <ProposalBody
+            proposal={proposal}
+            draft={draft}
+            editing={editing}
+            open={open}
+            inputId={inputId}
+            onDraftChange={setDraft}
+          />
+        </div>
+      )}
+
+      {proposal.status === "failed" && proposal.error && (
+        <div className="px-4 pb-3">
+          <Alert variant="error">{proposal.error}</Alert>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center justify-end gap-2 border-t border-ui-border-base px-4 py-2.5">
+        {open ? (
+          <>
+            <Button
+              size="small"
+              variant="transparent"
+              disabled={busy !== null}
+              isLoading={busy === "dismiss"}
+              onClick={dismiss}
+            >
+              Dismiss
+            </Button>
+            {editable && editing && (
+              <Button
+                size="small"
+                variant="secondary"
+                disabled={busy !== null}
+                onClick={() => {
+                  setDraft(proposalDraft(proposal))
+                  setEditing(false)
+                }}
+              >
+                Undo edits
+              </Button>
+            )}
+            {editable && !editing && (
+              <Button
+                size="small"
+                variant="secondary"
+                disabled={busy !== null}
+                onClick={() => setEditing(true)}
+              >
+                Edit
+              </Button>
+            )}
+            <Button
+              size="small"
+              variant="primary"
+              disabled={busy !== null || !canApproveProposal(proposal, draft)}
+              isLoading={busy === "approve"}
+              onClick={approve}
+            >
+              {proposal.status === "failed" ? "Try again" : "Approve"}
+            </Button>
+          </>
+        ) : (
+          <Button asChild size="small" variant="transparent">
+            <Link to={link.to}>{link.label}</Link>
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 const MessageRow = ({
+  merchantId,
   message,
   streaming,
+  onProposalChange,
 }: {
+  merchantId: string
   message: ChatMessage
   streaming: boolean
+  onProposalChange: (proposal: MerchantAssistantProposal) => void
 }) => {
   if (message.role === "user") {
     return (
@@ -227,6 +766,14 @@ const MessageRow = ({
             {message.tools.length ? "Writing an answer…" : "Thinking…"}
           </Text>
         )}
+        {message.proposals.map((proposal) => (
+          <ProposalCard
+            key={proposal.id}
+            merchantId={merchantId}
+            proposal={proposal}
+            onChange={onProposalChange}
+          />
+        ))}
         {message.error && (
           <Alert variant="error" className="max-w-full md:max-w-[85%]">
             {message.error}
@@ -289,6 +836,7 @@ const AssistantContent = ({ session }: { session: MerchantSession }) => {
           role: message.role,
           content: message.content,
           tools: [],
+          proposals: message.proposals ?? [],
         }))
       )
     } catch (error) {
@@ -315,8 +863,8 @@ const AssistantContent = ({ session }: { session: MerchantSession }) => {
     setSending(true)
     setMessages((current) => [
       ...current,
-      { id: newId(), role: "user", content: message, tools: [] },
-      { id: replyId, role: "assistant", content: "", tools: [] },
+      { id: newId(), role: "user", content: message, tools: [], proposals: [] },
+      { id: replyId, role: "assistant", content: "", tools: [], proposals: [] },
     ])
 
     try {
@@ -340,6 +888,16 @@ const AssistantContent = ({ session }: { session: MerchantSession }) => {
     }
   }
 
+  const updateProposal = (proposal: MerchantAssistantProposal) =>
+    setMessages((current) =>
+      current.map((message) => ({
+        ...message,
+        proposals: message.proposals.map((item) =>
+          item.id === proposal.id ? proposal : item
+        ),
+      }))
+    )
+
   if (statusQuery.isPending) {
     return <MerchantPageSkeleton />
   }
@@ -351,7 +909,7 @@ const AssistantContent = ({ session }: { session: MerchantSession }) => {
     <Container className="divide-y p-0">
       <MerchantPageHeader
         title="Assistant"
-        subtitle="Ask about sales, stock and products, or ask for a draft post or email. It reads your store data but can't change, post or send anything."
+        subtitle="Ask about sales, stock, products and customers, or ask for a draft post or email. It can suggest changes for you to approve, but never changes, posts or sends anything itself."
         actions={
           <Button
             size="small"
@@ -471,8 +1029,10 @@ const AssistantContent = ({ session }: { session: MerchantSession }) => {
             {messages.map((message, index) => (
               <MessageRow
                 key={message.id}
+                merchantId={merchantId}
                 message={message}
                 streaming={sending && index === messages.length - 1}
+                onProposalChange={updateProposal}
               />
             ))}
             <div ref={bottomRef} />

@@ -10,6 +10,7 @@ import {
   verifyMpesaOwnershipCodeWorkflow,
 } from "../../workflows/mpesa-onboarding"
 import type { UpdateOnboardingSessionInput } from "../../workflows/steps/mpesa-onboarding"
+import { storefrontUrl } from "../storefront-url"
 import { messagesFor, type OnboardingMessages } from "./messages"
 import {
   isNo,
@@ -39,10 +40,6 @@ export type OnboardingReply = {
 }
 
 const ACCOUNT_TYPES: MpesaAccountType[] = ["till", "paybill", "pochi"]
-
-const storefrontUrl = (hostname: string) =>
-  (process.env.STOREFRONT_URL_TEMPLATE || "http://{hostname}:8000")
-    .replace("{hostname}", hostname)
 
 const adminUrl = () =>
   process.env.MERCHANT_ADMIN_URL || "http://localhost:9000/app"

@@ -53,9 +53,12 @@ import {
   orderItemTotal,
 } from "./order-detail-utils"
 import {
+  amountToConfirm,
   canCancelMerchantOrder,
   formatOrderWorkflowStatus,
   merchantOrderWorkflowStatus,
+  merchantPaymentState,
+  type MerchantPaymentState,
 } from "../order-list-utils"
 
 type OrderAction = "fulfill" | "refund" | "return" | "exchange" | "note" | "ship"
@@ -834,6 +837,119 @@ const CustomerCard = ({ order }: { order: MerchantOrder }) => {
   )
 }
 
+const paymentStates: Record<
+  MerchantPaymentState,
+  { label: string; color: "green" | "orange" | "red" }
+> = {
+  paid: { label: "Paid", color: "green" },
+  to_confirm: { label: "Not confirmed", color: "orange" },
+  canceled: { label: "Canceled", color: "red" },
+}
+
+// Manual payments wait here until the merchant confirms the money arrived.
+const PaymentCard = ({
+  order,
+  merchantId,
+  canManage,
+}: {
+  order: MerchantOrder
+  merchantId: string
+  canManage: boolean
+}) => {
+  const prompt = usePrompt()
+  const queryClient = useQueryClient()
+  const payments = (order.payment_collections ?? []).flatMap(
+    ({ payments }) => payments ?? []
+  )
+  const markPaid = useMutation({
+    mutationFn: (paymentId: string) =>
+      merchantApi.post(
+        merchantId,
+        `/orders/${order.id}/payments/${paymentId}/capture`,
+        {}
+      ),
+    onSuccess: async () => {
+      await Promise.all([
+        invalidateOrderQueries(queryClient, merchantId, order.id),
+        queryClient.invalidateQueries({
+          queryKey: merchantQueryKeys.dashboard(merchantId),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: merchantQueryKeys.resource(merchantId, "home"),
+        }),
+      ])
+      toast.success("Marked as paid")
+    },
+    onError: (error) => toast.error(errorMessage(error)),
+  })
+
+  return (
+    <Container className="p-6">
+      <Heading level="h2">Payment</Heading>
+      <div className="mt-4 flex flex-col gap-y-2">
+        {payments.length ? (
+          payments.map((payment) => {
+            const state = merchantPaymentState(payment)
+            const currency = payment.currency_code || order.currency_code
+            const due = formatMoney(amountToConfirm(payment), currency)
+
+            return (
+              <div
+                className="bg-ui-bg-subtle shadow-elevation-card-rest flex flex-col gap-y-2 rounded-lg p-3"
+                key={payment.id}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <Text size="small" weight="plus">
+                    {formatMoney(payment.amount, currency)}
+                  </Text>
+                  <StatusBadge color={paymentStates[state].color}>
+                    {paymentStates[state].label}
+                  </StatusBadge>
+                </div>
+                {state === "paid" && payment.captured_at && (
+                  <Text size="xsmall" className="text-ui-fg-subtle">
+                    Marked as paid {formatDate(payment.captured_at)}
+                  </Text>
+                )}
+                {state === "to_confirm" && (
+                  <Text size="xsmall" className="text-ui-fg-subtle">
+                    {canManage
+                      ? "Check that you received the money, then mark the order as paid."
+                      : "An owner or admin marks the order as paid once the money arrives."}
+                  </Text>
+                )}
+                {state === "to_confirm" && canManage && (
+                  <Button
+                    size="small"
+                    variant="secondary"
+                    disabled={markPaid.isPending}
+                    isLoading={markPaid.isPending && markPaid.variables === payment.id}
+                    onClick={async () => {
+                      const confirmed = await prompt({
+                        title: `Mark order #${order.display_id} as paid?`,
+                        description: `Only do this once you've received ${due}. It can't be undone; to give money back later, use Refund.`,
+                        confirmText: "Mark as paid",
+                        variant: "confirmation",
+                      })
+                      if (confirmed) markPaid.mutate(payment.id)
+                    }}
+                  >
+                    <CheckCircle /> Mark as paid
+                  </Button>
+                )}
+              </div>
+            )
+          })
+        ) : (
+          <Text size="small" className="text-ui-fg-subtle">
+            No payment recorded for this order.
+          </Text>
+        )}
+      </div>
+    </Container>
+  )
+}
+
 const AddressCard = ({
   title,
   address,
@@ -1079,6 +1195,11 @@ const OrderDetailsContent = ({ session }: { session: MerchantSession }) => {
               ))}
             </div>
           </Container>
+          <PaymentCard
+            order={order}
+            merchantId={session.merchant.id}
+            canManage={canManage}
+          />
           <Container className="p-6">
             <div className="flex items-center justify-between">
               <Heading level="h2">Fulfillment</Heading>

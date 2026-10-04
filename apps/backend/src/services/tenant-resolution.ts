@@ -76,6 +76,8 @@ export type MerchantOwnedResourceType =
   | "merchant_customer_profile"
   | "merchant_customer_address"
   | "customer_group"
+  | "promotion"
+  | "campaign"
 
 type StoreDomainGraph = {
   id: string
@@ -217,6 +219,8 @@ const ownershipPathByResourceType: Record<
   merchant_customer_profile: "merchant",
   merchant_customer_address: "merchant_customer_profile.merchant",
   customer_group: "merchant",
+  promotion: "merchant",
+  campaign: "merchant",
 }
 
 const hostnameLabelPattern = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
@@ -594,6 +598,45 @@ export async function assertMerchantOwns(
   if (!record || ownerId !== merchantId) {
     throw ownedResourceNotFoundError(resourceType)
   }
+}
+
+/**
+ * Maps the promotion codes a shopper typed onto the merchant's own codes,
+ * ignoring case (Medusa matches codes exactly). Another shop's code is
+ * refused the same way as a code that doesn't exist.
+ */
+export async function resolveStorePromotionCodes(
+  container: MedusaContainer,
+  merchantId: ResolvedMerchantId,
+  codes: readonly string[]
+): Promise<string[]> {
+  const query = container.resolve(ContainerRegistrationKeys.QUERY)
+  const { data } = await query.graph({
+    entity: "merchant",
+    fields: ["promotions.code"],
+    filters: { id: merchantId },
+  })
+  const merchant = (data as unknown as Array<{
+    promotions?: Array<{ code?: string | null }>
+  }>)[0]
+  const owned = new Map(
+    (merchant?.promotions ?? []).flatMap(({ code }) =>
+      code ? [[code.toUpperCase(), code] as const] : []
+    )
+  )
+
+  return codes.map((code) => {
+    const match = owned.get(code.trim().toUpperCase())
+
+    if (!match) {
+      throw new MedusaError(
+        MedusaError.Types.INVALID_DATA,
+        `The promotion code ${code.trim()} is invalid`
+      )
+    }
+
+    return match
+  })
 }
 
 /**

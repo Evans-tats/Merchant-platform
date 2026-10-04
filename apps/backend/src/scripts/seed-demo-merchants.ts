@@ -8,6 +8,7 @@ import { createUsersWorkflow } from "@medusajs/medusa/core-flows"
 
 import { MERCHANT_MODULE } from "../modules/merchant"
 import MerchantModuleService from "../modules/merchant/service"
+import { storefrontUrl } from "../services/storefront-url"
 import { createMerchantProductsWorkflow } from "../workflows/merchant-catalog"
 import { provisionMerchantWorkflow } from "../workflows/provision-merchant"
 
@@ -30,16 +31,22 @@ type DemoMerchant = {
   }
 }
 
+// Shops live under MERCHANT_PLATFORM_DOMAIN like onboarded stores do, and a
+// deployed demo sets DEMO_OWNER_PASSWORD so the repo default doesn't log in.
+const platformDomain =
+  process.env.MERCHANT_PLATFORM_DOMAIN?.trim() || "localhost"
+const ownerPassword = process.env.DEMO_OWNER_PASSWORD || "supersecret"
+
 const demoMerchants: DemoMerchant[] = [
   {
     name: "Merchant A",
     slug: "merchant-a",
-    hostname: "shop-a.localhost",
+    hostname: `shop-a.${platformDomain}`,
     owner: {
       email: "owner-a@test.local",
       first_name: "Merchant",
       last_name: "Owner A",
-      password: "supersecret",
+      password: ownerPassword,
     },
     product: {
       title: "Merchant A T-Shirt",
@@ -53,12 +60,12 @@ const demoMerchants: DemoMerchant[] = [
   {
     name: "Merchant B",
     slug: "merchant-b",
-    hostname: "shop-b.localhost",
+    hostname: `shop-b.${platformDomain}`,
     owner: {
       email: "owner-b@test.local",
       first_name: "Merchant",
       last_name: "Owner B",
-      password: "supersecret",
+      password: ownerPassword,
     },
     product: {
       title: "Merchant B Sweatshirt",
@@ -253,7 +260,9 @@ export default async function seedDemoMerchants({ container }: ExecArgs) {
   logger.info("Demo merchants are ready:")
   for (const demo of demoMerchants) {
     logger.info(
-      `${demo.name}: http://${demo.hostname}:8000 | ${demo.owner.email} / ${demo.owner.password}`
+      `${demo.name}: ${storefrontUrl(demo.hostname)} | ${demo.owner.email} / ${
+        process.env.DEMO_OWNER_PASSWORD ? "DEMO_OWNER_PASSWORD" : ownerPassword
+      }`
     )
   }
 }

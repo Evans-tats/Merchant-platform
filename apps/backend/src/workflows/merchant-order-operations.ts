@@ -4,6 +4,7 @@ import type {
 } from "@medusajs/framework/types"
 import {
   ContainerRegistrationKeys,
+  MathBN,
   MedusaError,
   Modules,
 } from "@medusajs/framework/utils"
@@ -17,6 +18,7 @@ import {
 import {
   cancelOrderWorkflow,
   beginExchangeOrderWorkflow,
+  capturePaymentWorkflow,
   createAndCompleteReturnOrderWorkflow,
   createOrderFulfillmentWorkflow,
   createOrderShipmentWorkflow,
@@ -62,6 +64,12 @@ type RefundMerchantPaymentInput = MerchantScopeInput & {
   payment_id: string
   actor_id: string
   refund: HttpTypes.AdminRefundPayment
+}
+
+type CaptureMerchantPaymentInput = MerchantScopeInput & {
+  order_id: string
+  payment_id: string
+  actor_id: string
 }
 
 type ShipMerchantOrderInput = MerchantScopeInput & {
@@ -397,6 +405,72 @@ const validateMerchantPaymentStep = createStep(
   }
 )
 
+type CapturablePaymentGraph = {
+  id: string
+  amount: number
+  captured_at?: Date | string | null
+  canceled_at?: Date | string | null
+  captures?: Array<{ amount: number } | null> | null
+  payment_collection?: { order?: { display_id?: number | null } | null } | null
+}
+
+// What is left to capture on a payment. A manual payment, such as cash on
+// delivery or M-Pesa sent by hand, is authorized at checkout and captured
+// once the merchant confirms the money arrived.
+const resolveMerchantPaymentCaptureStep = createStep(
+  "resolve-merchant-payment-capture",
+  async (input: { payment_id: string }, { container }) => {
+    const query = container.resolve(ContainerRegistrationKeys.QUERY)
+    const { data } = await query.graph({
+      entity: "payment",
+      fields: [
+        "id",
+        "amount",
+        "captured_at",
+        "canceled_at",
+        "captures.amount",
+        "payment_collection.order.display_id",
+      ],
+      filters: { id: input.payment_id },
+    })
+    const payment = (data as unknown as CapturablePaymentGraph[])[0]
+
+    if (!payment) {
+      throw new MedusaError(MedusaError.Types.NOT_FOUND, "payment not found")
+    }
+
+    if (payment.canceled_at) {
+      throw new MedusaError(
+        MedusaError.Types.NOT_ALLOWED,
+        "This payment was canceled, so it can't be marked as paid"
+      )
+    }
+
+    const captures = (payment.captures ?? []).filter(
+      (capture): capture is { amount: number } => Boolean(capture)
+    )
+    const remaining = MathBN.sub(
+      payment.amount,
+      MathBN.add(0, ...captures.map(({ amount }) => amount))
+    )
+
+    if (payment.captured_at || MathBN.lte(remaining, 0)) {
+      throw new MedusaError(
+        MedusaError.Types.NOT_ALLOWED,
+        "This payment is already marked as paid"
+      )
+    }
+
+    // Without an amount Medusa captures the whole payment, so the amount is
+    // only given when part of it was captured before.
+    return new StepResponse({
+      payment_id: payment.id,
+      amount: captures.length ? remaining.toNumber() : undefined,
+      order_number: payment.payment_collection?.order?.display_id ?? null,
+    })
+  }
+)
+
 const validateMerchantShipmentStep = createStep(
   "validate-merchant-shipment",
   async (
@@ -655,6 +729,36 @@ export const refundMerchantPaymentWorkflow = createWorkflow(
     })
 
     return new WorkflowResponse(refund)
+  }
+)
+
+// Marks an order's payment as paid by capturing what is left of it, the same
+// step Medusa's own admin runs from its "Capture payment" button.
+export const captureMerchantPaymentWorkflow = createWorkflow(
+  "capture-merchant-payment",
+  function (input: CaptureMerchantPaymentInput) {
+    const scope = validateMerchantScopeStep(input)
+
+    validateMerchantPaymentStep({
+      merchant_id: scope.merchant_id,
+      order_id: input.order_id,
+      payment_id: input.payment_id,
+    })
+    const capture = resolveMerchantPaymentCaptureStep({
+      payment_id: input.payment_id,
+    })
+    const captureInput = transform({ input, capture }, ({ input, capture }) => ({
+      payment_id: capture.payment_id,
+      amount: capture.amount,
+      captured_by: input.actor_id,
+    }))
+    const payment = capturePaymentWorkflow.runAsStep({ input: captureInput })
+    const result = transform({ payment, capture }, ({ payment, capture }) => ({
+      payment,
+      order_number: capture.order_number,
+    }))
+
+    return new WorkflowResponse(result)
   }
 )
 

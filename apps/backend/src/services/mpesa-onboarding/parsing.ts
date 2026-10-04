@@ -124,3 +124,11 @@ export function slugify(value: string): string {
     .slice(0, 40)
     .replace(/-$/, "")
 }
+
+// Subdomains of MERCHANT_PLATFORM_DOMAIN the platform serves itself (the
+// backend runs at api.<domain>), so no store may be published on them.
+const RESERVED_STORE_SLUGS = new Set(["api", "admin", "app", "www"])
+
+export function isReservedStoreSlug(slug: string): boolean {
+  return RESERVED_STORE_SLUGS.has(slug)
+}

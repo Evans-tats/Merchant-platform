@@ -10,6 +10,7 @@ import {
   assertStoreOwnedDetail,
   assertStoreOrder,
   assertStoreProductDetail,
+  assertStorePromotionCodes,
   assertStoreShippingOptionsCart,
   prepareStoreCartCreate,
   requirePlatformAdministrator,
@@ -26,6 +27,8 @@ import { merchantOrderShipmentMiddlewares } from "./admin/merchants/[merchantId]
 import { merchantProductMiddlewares } from "./admin/merchants/[merchantId]/products/middlewares"
 import { merchantCustomerMiddlewares } from "./admin/merchants/[merchantId]/customers/middlewares"
 import { merchantCustomerSegmentMiddlewares } from "./admin/merchants/[merchantId]/customer-segments/middlewares"
+import { merchantPromotionMiddlewares } from "./admin/merchants/[merchantId]/promotions/middlewares"
+import { merchantCampaignMiddlewares } from "./admin/merchants/[merchantId]/campaigns/middlewares"
 import { merchantCollectionMiddlewares } from "./admin/merchants/[merchantId]/collections/middlewares"
 import { merchantCategoryMiddlewares } from "./admin/merchants/[merchantId]/categories/middlewares"
 import { merchantUploadMiddlewares } from "./admin/merchants/[merchantId]/uploads/middlewares"
@@ -123,6 +126,7 @@ export default defineMiddlewares({
       middlewares: [
         resolveStoreMerchantMiddleware,
         prepareStoreCartCreate,
+        assertStorePromotionCodes,
       ],
     },
     {
@@ -136,6 +140,16 @@ export default defineMiddlewares({
       matcher: "/store/carts/:id/line-items",
       methods: ["POST"],
       middlewares: [assertStoreCartLineItemProduct],
+    },
+    {
+      matcher: "/store/carts/:id",
+      methods: ["POST"],
+      middlewares: [assertStorePromotionCodes],
+    },
+    {
+      matcher: "/store/carts/:id/promotions",
+      methods: ["POST"],
+      middlewares: [assertStorePromotionCodes],
     },
     {
       matcher: "/store/shipping-options",
@@ -318,6 +332,8 @@ export default defineMiddlewares({
     ...merchantProductMiddlewares,
     ...merchantCustomerMiddlewares,
     ...merchantCustomerSegmentMiddlewares,
+    ...merchantPromotionMiddlewares,
+    ...merchantCampaignMiddlewares,
     ...merchantCollectionMiddlewares,
     ...merchantCategoryMiddlewares,
     ...merchantUploadMiddlewares,

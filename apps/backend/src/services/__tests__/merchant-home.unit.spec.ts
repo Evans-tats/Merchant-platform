@@ -122,4 +122,28 @@ describe("merchant home", () => {
     expect(result.summary.orders).toBe(1)
     expect(result.has_mixed_currencies).toBe(true)
   })
+
+  it("links View storefront through the deployment's storefront template", () => {
+    const original = process.env.STOREFRONT_URL_TEMPLATE
+    process.env.STOREFRONT_URL_TEMPLATE = "http://{hostname}:8000"
+
+    try {
+      const result = buildMerchantHome({
+        merchant,
+        period: resolveMerchantHomePeriod(
+          "7d",
+          new Date("2026-09-27T09:00:00.000Z"),
+        ),
+        period_orders: [],
+        attention_orders: [],
+        recent_orders: [],
+      })
+
+      expect(result.store_health.storefront_url).toBe(
+        "http://neema.example.com:8000",
+      )
+    } finally {
+      process.env.STOREFRONT_URL_TEMPLATE = original
+    }
+  })
 })

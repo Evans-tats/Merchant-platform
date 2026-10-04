@@ -38,5 +38,24 @@ module.exports = defineConfig({
     {
       resolve: "./src/modules/agent",
     },
+    {
+      // Uploads are written to <cwd>/static and served at /static. In
+      // production that folder is a persistent volume, and backend_url must be
+      // the public backend URL or product images point at localhost.
+      resolve: "@medusajs/medusa/file",
+      options: {
+        providers: [
+          {
+            resolve: "@medusajs/medusa/file-local",
+            id: "local",
+            options: {
+              backend_url: `${
+                process.env.MEDUSA_BACKEND_URL || "http://localhost:9000"
+              }/static`,
+            },
+          },
+        ],
+      },
+    },
   ],
 })

@@ -102,6 +102,65 @@ describe("merchant customer list", () => {
     ])
   })
 
+  it("counts spend on placed orders only, like the home page", () => {
+    const order = (id: string, status: string, total: number, currency = "kes") => ({
+      id,
+      customer_id: "cus_1",
+      status,
+      total,
+      currency_code: currency,
+      created_at: "2026-09-01T10:00:00.000Z",
+    })
+    const [customer] = buildMerchantCustomerList({
+      orders: [
+        order("order_1", "completed", 2500),
+        order("order_2", "pending", 1500, "KES"),
+        order("order_3", "canceled", 9000),
+        order("order_4", "draft", 400),
+      ],
+    })
+
+    expect(customer).toEqual(
+      expect.objectContaining({
+        order_count: 4,
+        placed_order_count: 2,
+        total_spent: 4000,
+        currency_code: "kes",
+      })
+    )
+  })
+
+  it("leaves the currency out when placed orders mix currencies", () => {
+    const [customer] = buildMerchantCustomerList({
+      orders: [
+        { id: "order_1", customer_id: "cus_1", status: "pending", total: 10, currency_code: "usd" },
+        { id: "order_2", customer_id: "cus_1", status: "pending", total: 1500, currency_code: "kes" },
+        { id: "order_3", customer_id: "cus_1", status: "pending", total: 20, currency_code: "usd" },
+      ],
+    })
+
+    expect(customer).toEqual(
+      expect.objectContaining({ placed_order_count: 3, currency_code: null })
+    )
+  })
+
+  it("starts customers without placed orders at nothing spent", () => {
+    const [customer] = buildMerchantCustomerList({
+      customerProfiles: [
+        { id: "mercprof_1", customer_id: "cus_1", status: "active", profile: {} },
+      ],
+    })
+
+    expect(customer).toEqual(
+      expect.objectContaining({
+        order_count: 0,
+        placed_order_count: 0,
+        total_spent: 0,
+        currency_code: null,
+      })
+    )
+  })
+
   it("deduplicates legacy orders without a customer ID by normalized email", () => {
     const customers = buildMerchantCustomerList({
       orders: [

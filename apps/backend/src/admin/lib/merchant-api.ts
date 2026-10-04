@@ -100,11 +100,76 @@ export type MerchantAssistantSession = {
   created_at: string
 }
 
+export type MerchantAssistantProposalStatus =
+  | "pending"
+  | "approved"
+  | "dismissed"
+  | "failed"
+
+// A customer on a segment card, with the email masked.
+export type MerchantAssistantProposalCustomer = {
+  id: string
+  name: string
+  email: string | null
+}
+
+// A change the assistant suggested. Approving it calls the change's own
+// merchant route; the assistant never applies anything itself. Each action
+// adds its own args and preview to the union.
+export type MerchantAssistantProposal = {
+  id: string
+  summary: string
+  status: MerchantAssistantProposalStatus
+  error: string | null
+} & (
+  | {
+      action: "add_order_note"
+      args: { order_id: string; note: string }
+      preview: { order_number: number }
+    }
+  | {
+      action: "publish_product"
+      args: { product_id: string }
+      preview: { title: string; status: string }
+    }
+  | {
+      action: "update_product_description"
+      args: { product_id: string; description: string }
+      preview: { title: string; current_description: string | null }
+    }
+  | {
+      action: "add_collection_products"
+      args: { collection_id: string; product_ids: string[] }
+      preview: {
+        collection_title: string
+        products: Array<{
+          id: string
+          title: string
+          current_collection: string | null
+        }>
+      }
+    }
+  | {
+      action: "update_segment_customers"
+      args: { segment_id: string; add: string[]; remove: string[] }
+      preview: {
+        segment_name: string
+        customers: MerchantAssistantProposalCustomer[]
+      }
+    }
+  | {
+      action: "create_segment"
+      args: { name: string; description: string | null; customer_ids: string[] }
+      preview: { customers: MerchantAssistantProposalCustomer[] }
+    }
+)
+
 export type MerchantAssistantMessage = {
   id: string
   role: "user" | "assistant"
   content: string
   created_at: string
+  proposals?: MerchantAssistantProposal[]
 }
 
 export type MerchantAssistantEvent =
@@ -112,6 +177,7 @@ export type MerchantAssistantEvent =
   | { type: "text"; content: string }
   | { type: "tool_call"; id: string; tool: string }
   | { type: "tool_result"; id: string; tool: string; ok: boolean }
+  | { type: "proposal"; proposal: MerchantAssistantProposal }
   | { type: "done" }
   | { type: "error"; message: string }
 
@@ -205,6 +271,8 @@ export type MerchantOrder = {
       amount: number
       currency_code?: string
       captured_at?: string | null
+      canceled_at?: string | null
+      captures?: Array<{ id: string; amount: number } | null>
       refunds?: Array<{ id: string; amount: number; created_at?: string }>
     }>
   }>
@@ -423,6 +491,87 @@ export type MerchantCategoryDetail = MerchantCategory & {
 export type MerchantCategoryListResponse = {
   product_categories: MerchantCategoryListItem[]
   count: number
+}
+
+export type MerchantPromotionStatus = "draft" | "active" | "inactive"
+
+// A condition on who can use a promotion or which items it covers. Each
+// value comes with the name of the segment, product, category or collection.
+export type MerchantPromotionRule = {
+  id: string
+  attribute: string
+  operator: "in" | "eq" | "ne"
+  values: Array<{ value: string; label: string }>
+}
+
+export type MerchantCampaignBudget = {
+  type: "spend" | "usage"
+  limit: number | null
+  used: number
+  currency_code: string | null
+}
+
+export type MerchantCampaign = {
+  id: string
+  name: string
+  description: string | null
+  starts_at: string | null
+  ends_at: string | null
+  budget: MerchantCampaignBudget | null
+  promotion_count: number
+  status: "scheduled" | "active" | "ended"
+  created_at: string | null
+  updated_at: string | null
+}
+
+export type MerchantPromotion = {
+  id: string
+  code: string
+  type: "standard" | "buyget"
+  status: MerchantPromotionStatus
+  is_automatic: boolean
+  limit: number | null
+  used: number
+  application_method: {
+    type: "fixed" | "percentage"
+    target_type: "items" | "order"
+    allocation: "each" | "across"
+    value: number
+    currency_code: string | null
+    max_quantity: number | null
+    buy_rules_min_quantity: number | null
+    apply_to_quantity: number | null
+  }
+  rules: MerchantPromotionRule[]
+  target_rules: MerchantPromotionRule[]
+  buy_rules: MerchantPromotionRule[]
+  campaign: MerchantCampaign | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export type MerchantPromotionDetail = MerchantPromotion & {
+  currency_codes: string[]
+}
+
+export type MerchantPromotionListResponse = {
+  promotions: MerchantPromotion[]
+  count: number
+  limit: number
+  offset: number
+  currency_codes: string[]
+}
+
+export type MerchantCampaignDetail = MerchantCampaign & {
+  promotions: MerchantPromotion[]
+}
+
+export type MerchantCampaignListResponse = {
+  campaigns: MerchantCampaign[]
+  count: number
+  limit: number
+  offset: number
+  currency_codes: string[]
 }
 
 export type MerchantInventoryLevel = {
@@ -830,6 +979,26 @@ export const merchantApi = {
         onEvent(value as MerchantAssistantEvent)
       )
     },
+
+    // Records what the member did with a suggestion card.
+    resolveProposal: async (
+      merchantId: string,
+      proposalId: string,
+      body: {
+        status: Exclude<MerchantAssistantProposalStatus, "pending">
+        error?: string
+        edits?: Record<string, unknown>
+      }
+    ) => {
+      const response = await sdk.client.fetch<{
+        proposal: MerchantAssistantProposal
+      }>(`/admin/merchants/${merchantId}/assistant/proposals/${proposalId}`, {
+        method: "POST",
+        body,
+      })
+
+      return response.proposal
+    },
   },
 }
 
@@ -845,15 +1014,7 @@ export function canManageMerchant(role: MerchantRole): boolean {
   return role === "owner" || role === "admin"
 }
 
-export function formatMoney(
-  amount: number | undefined,
-  currencyCode = "KES"
-): string {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: currencyCode.toUpperCase(),
-  }).format(amount ?? 0)
-}
+export { formatMoney } from "./format-money"
 
 export function downloadCsv(
   filename: string,

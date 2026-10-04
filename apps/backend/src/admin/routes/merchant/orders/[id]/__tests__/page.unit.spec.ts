@@ -49,4 +49,13 @@ describe("merchant order fulfillment form regression", () => {
     expect(source).toContain("noNotification: !sendDeliveryNotification")
     expect(source).toContain("<Prompt.Title>Mark fulfillment as delivered?</Prompt.Title>")
   })
+
+  it("lets only owners and admins mark an unconfirmed payment as paid", () => {
+    const source = readFileSync(resolve(__dirname, "../page.tsx"), "utf8")
+
+    expect(source).toContain("<CheckCircle /> Mark as paid")
+    expect(source).toContain('state === "to_confirm" && canManage')
+    expect(source).toContain("/payments/${paymentId}/capture")
+    expect(source).toContain("Only do this once you've received ${due}.")
+  })
 })

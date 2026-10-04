@@ -21,6 +21,7 @@ import {
   listMerchantOwnedIds,
   resolveStaffMerchant,
   resolveStoreMerchant,
+  resolveStorePromotionCodes,
 } from "../../services/tenant-resolution"
 import {
   getStoreMerchantContext,
@@ -45,6 +46,10 @@ type AddLineItemBody = {
 
 type ShippingOptionCartBody = {
   cart_id?: string
+}
+
+type PromotionCodesBody = {
+  promo_codes?: string[]
 }
 
 export async function requirePlatformAdministrator(
@@ -364,6 +369,26 @@ export async function assertStoreCartLineItemProduct(
     variantId,
     getStoreMerchantContext(request)
   )
+  next()
+}
+
+// Codes can reach a cart when it's created, updated, or through the
+// promotions route; each only accepts this merchant's codes.
+export async function assertStorePromotionCodes(
+  request: MedusaRequest,
+  _response: MedusaResponse,
+  next: MedusaNextFunction
+): Promise<void> {
+  const body = request.validatedBody as PromotionCodesBody | undefined
+
+  if (body?.promo_codes?.length) {
+    body.promo_codes = await resolveStorePromotionCodes(
+      request.scope,
+      getStoreMerchantContext(request).merchant.id,
+      body.promo_codes
+    )
+  }
+
   next()
 }
 

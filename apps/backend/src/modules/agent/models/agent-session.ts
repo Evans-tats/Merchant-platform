@@ -1,6 +1,7 @@
 import { model } from "@medusajs/framework/utils"
 
 import AgentMessage from "./agent-message"
+import AgentProposal from "./agent-proposal"
 
 // One conversation with an admin agent. Sessions belong to the merchant
 // member who started them; agent_type tells the agents apart.
@@ -14,6 +15,9 @@ const AgentSession = model
     messages: model.hasMany(() => AgentMessage, {
       mappedBy: "session",
     }),
+    proposals: model.hasMany(() => AgentProposal, {
+      mappedBy: "session",
+    }),
   })
   .indexes([
     {
@@ -23,7 +27,7 @@ const AgentSession = model
     },
   ])
   .cascades({
-    delete: ["messages"],
+    delete: ["messages", "proposals"],
   })
 
 export default AgentSession

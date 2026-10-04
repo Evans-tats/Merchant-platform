@@ -1,8 +1,10 @@
 import type { MerchantOrder } from "../../../../lib/merchant-api"
 import {
+  amountToConfirm,
   canCancelMerchantOrder,
   formatOrderWorkflowStatus,
   merchantOrderWorkflowStatus,
+  merchantPaymentState,
 } from "../order-list-utils"
 
 const order = (overrides: Partial<MerchantOrder> = {}): MerchantOrder => ({
@@ -56,5 +58,32 @@ describe("order list utilities", () => {
     expect(formatOrderWorkflowStatus("partially_fulfilled")).toBe(
       "partially fulfilled"
     )
+  })
+
+  it("waits for the merchant to confirm a manual payment", () => {
+    const payment = { id: "pay_1", amount: 6600 }
+
+    expect(merchantPaymentState(payment)).toBe("to_confirm")
+    expect(
+      merchantPaymentState({ ...payment, captured_at: "2026-10-04" })
+    ).toBe("paid")
+    expect(
+      merchantPaymentState({
+        ...payment,
+        captured_at: "2026-10-04",
+        canceled_at: "2026-10-05",
+      })
+    ).toBe("canceled")
+  })
+
+  it("confirms only what is left after an earlier partial capture", () => {
+    expect(amountToConfirm({ id: "pay_1", amount: 44.1 })).toBe(44.1)
+    expect(
+      amountToConfirm({
+        id: "pay_1",
+        amount: 44.1,
+        captures: [{ id: "capt_1", amount: 20.05 }, null],
+      })
+    ).toBe(24.05)
   })
 })

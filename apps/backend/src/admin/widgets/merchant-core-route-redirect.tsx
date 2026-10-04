@@ -49,6 +49,14 @@ const merchantRouteFor = (pathname: string): string | undefined => {
       pattern: /^\/customer-groups\/(?!create$)([^/]+)$/,
       target: "/merchant-customer-segments",
     },
+    {
+      pattern: /^\/promotions\/(?!create$)([^/]+)$/,
+      target: "/merchant-promotions",
+    },
+    {
+      pattern: /^\/campaigns\/(?!create$)([^/]+)$/,
+      target: "/merchant-campaigns",
+    },
   ]
 
   for (const route of detailRoutes) {
@@ -72,8 +80,8 @@ const merchantRouteFor = (pathname: string): string | undefined => {
     return "/merchant-customer-segments"
   }
   if (pathname.startsWith("/settings")) return "/merchant/settings"
-  if (pathname.startsWith("/promotions")) return "/merchant"
-  if (pathname.startsWith("/campaigns")) return "/merchant"
+  if (pathname.startsWith("/promotions")) return "/merchant-promotions"
+  if (pathname.startsWith("/campaigns")) return "/merchant-campaigns"
   if (pathname.startsWith("/price-lists")) return "/merchant"
 
   return undefined
