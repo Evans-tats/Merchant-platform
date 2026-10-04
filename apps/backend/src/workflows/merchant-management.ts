@@ -9,7 +9,10 @@ import {
   transform,
   WorkflowResponse,
 } from "@medusajs/framework/workflows-sdk"
-import { getOrdersListWorkflow } from "@medusajs/medusa/core-flows"
+import {
+  getOrdersListWorkflow,
+  useQueryGraphStep,
+} from "@medusajs/medusa/core-flows"
 
 import type { ResolvedMerchantId } from "../services/tenant-resolution"
 import {
@@ -146,98 +149,81 @@ const retrieveMerchantSessionRecordStep = createStep(
   }
 )
 
-const retrieveMerchantManagementStep = createStep(
-  "retrieve-merchant-management",
-  async (
-    input: { merchant_id: ResolvedMerchantId },
-    { container }
-  ) => {
-    const query = container.resolve(ContainerRegistrationKeys.QUERY)
-    const { data } = await query.graph({
-      entity: "merchant",
-      fields: [
-        "id",
-        "name",
-        "slug",
-        "status",
-        "created_at",
-        "updated_at",
-        "primary_sales_channel.id",
-        "primary_sales_channel.name",
-        "domains.id",
-        "domains.hostname",
-        "domains.type",
-        "domains.status",
-        "domains.is_primary",
-        "members.id",
-        "members.actor_id",
-        "members.role",
-        "members.status",
-        "members.user.id",
-        "members.user.email",
-        "members.user.first_name",
-        "members.user.last_name",
-        "invitations.id",
-        "invitations.email",
-        "invitations.role",
-        "invitations.status",
-        "invitations.created_at",
-        "themes.id",
-        "themes.version",
-        "themes.configuration",
-        "themes.is_active",
-        "payment_configs.id",
-        "payment_configs.provider",
-        "payment_configs.mode",
-        "payment_configs.status",
-        "payment_configs.public_configuration",
-        "product_categories.id",
-        "product_categories.name",
-        "product_categories.handle",
-        "product_categories.description",
-        "product_categories.is_active",
-        "product_categories.is_internal",
-        "product_categories.parent_category_id",
-        "product_collections.id",
-        "product_collections.title",
-        "product_collections.handle",
-        "product_collections.created_at",
-        "product_collections.updated_at",
-        "orders.id",
-        "products.id",
-        "products.title",
-        "products.handle",
-        "products.status",
-        "products.thumbnail",
-        "products.created_at",
-        "stock_locations.id",
-        "stock_locations.name",
-        "stock_locations.address.*",
-        "shipping_profiles.id",
-        "shipping_profiles.name",
-        "shipping_profiles.type",
-        "customer_profiles.id",
-        "customer_profiles.customer_id",
-        "customer_profiles.status",
-        "customer_profiles.profile",
-        "customer_profiles.created_at",
-        "customer_profiles.customer.id",
-        "customer_profiles.customer.email",
-        "customer_profiles.customer.first_name",
-        "customer_profiles.customer.last_name",
-        "customer_profiles.customer.company_name",
-        "customer_profiles.customer.phone",
-        "customer_profiles.customer.has_account",
-        "customer_profiles.customer.created_at",
-      ],
-      filters: { id: input.merchant_id },
-    })
-
-    return new StepResponse(
-      (data as unknown as MerchantManagementGraph[])[0]
-    )
-  }
-)
+const merchantManagementFields = [
+  "id",
+  "name",
+  "slug",
+  "status",
+  "created_at",
+  "updated_at",
+  "primary_sales_channel.id",
+  "primary_sales_channel.name",
+  "domains.id",
+  "domains.hostname",
+  "domains.type",
+  "domains.status",
+  "domains.is_primary",
+  "members.id",
+  "members.actor_id",
+  "members.role",
+  "members.status",
+  "members.user.id",
+  "members.user.email",
+  "members.user.first_name",
+  "members.user.last_name",
+  "invitations.id",
+  "invitations.email",
+  "invitations.role",
+  "invitations.status",
+  "invitations.created_at",
+  "themes.id",
+  "themes.version",
+  "themes.configuration",
+  "themes.is_active",
+  "payment_configs.id",
+  "payment_configs.provider",
+  "payment_configs.mode",
+  "payment_configs.status",
+  "payment_configs.public_configuration",
+  "product_categories.id",
+  "product_categories.name",
+  "product_categories.handle",
+  "product_categories.description",
+  "product_categories.is_active",
+  "product_categories.is_internal",
+  "product_categories.parent_category_id",
+  "product_collections.id",
+  "product_collections.title",
+  "product_collections.handle",
+  "product_collections.created_at",
+  "product_collections.updated_at",
+  "orders.id",
+  "products.id",
+  "products.title",
+  "products.handle",
+  "products.status",
+  "products.thumbnail",
+  "products.created_at",
+  "stock_locations.id",
+  "stock_locations.name",
+  "stock_locations.address.*",
+  "shipping_profiles.id",
+  "shipping_profiles.name",
+  "shipping_profiles.type",
+  "customer_profiles.id",
+  "customer_profiles.customer_id",
+  "customer_profiles.status",
+  "customer_profiles.profile",
+  "customer_profiles.created_at",
+  "customer_profiles.customer.id",
+  "customer_profiles.customer.email",
+  "customer_profiles.customer.first_name",
+  "customer_profiles.customer.last_name",
+  "customer_profiles.customer.company_name",
+  "customer_profiles.customer.phone",
+  "customer_profiles.customer.has_account",
+  "customer_profiles.customer.created_at",
+]
 
 const listMerchantCustomersStep = createStep(
   "list-merchant-customers",
@@ -338,9 +324,15 @@ export const retrieveMerchantManagementWorkflow = createWorkflow(
   "retrieve-merchant-management",
   function (input: MerchantScopeInput) {
     const scope = validateMerchantScopeStep(input)
-    const merchant = retrieveMerchantManagementStep({
-      merchant_id: scope.merchant_id,
+    const { data: merchants } = useQueryGraphStep({
+      entity: "merchant",
+      fields: merchantManagementFields,
+      filters: { id: scope.merchant_id },
     })
+    const merchant = transform(
+      { merchants },
+      ({ merchants }) => merchants[0] as unknown as MerchantManagementGraph
+    )
     const orderIds = transform({ merchant }, ({ merchant }) =>
       (merchant?.orders ?? []).map((order) => order.id)
     )

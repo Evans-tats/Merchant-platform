@@ -1,5 +1,5 @@
 import type {
-  MedusaRequest,
+  AuthenticatedMedusaRequest,
   MedusaResponse,
 } from "@medusajs/framework/http"
 
@@ -7,7 +7,7 @@ import { getMerchantRouteScope } from "../../../../utils/merchant-route-scope"
 import { listMerchantActivityWorkflow } from "../../../../../workflows/merchant-insights"
 
 export const GET = async (
-  request: MedusaRequest,
+  request: AuthenticatedMedusaRequest,
   response: MedusaResponse
 ) => {
   const { result } = await listMerchantActivityWorkflow(request.scope).run({

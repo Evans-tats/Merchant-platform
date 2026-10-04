@@ -1,5 +1,5 @@
 import type {
-  MedusaRequest,
+  AuthenticatedMedusaRequest,
   MedusaResponse,
 } from "@medusajs/framework/http"
 
@@ -7,7 +7,7 @@ import { getMerchantRouteScope } from "../../../../../../utils/merchant-route-sc
 import { markMerchantNotificationReadWorkflow } from "../../../../../../../workflows/merchant-insights"
 
 export const POST = async (
-  request: MedusaRequest,
+  request: AuthenticatedMedusaRequest,
   response: MedusaResponse
 ) => {
   const { result } = await markMerchantNotificationReadWorkflow(

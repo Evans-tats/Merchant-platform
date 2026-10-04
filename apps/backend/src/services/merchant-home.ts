@@ -95,8 +95,33 @@ const nairobiStartOfDay = (value: Date) => {
   return new Date(`${key}T00:00:00+03:00`)
 }
 
-const isPlacedOrder = ({ status }: MerchantHomeOrderSource) =>
-  !["canceled", "cancelled", "draft"].includes(status)
+type OrderStatusSource = Pick<
+  MerchantHomeOrderSource,
+  "status" | "fulfillment_status" | "payment_status"
+>
+
+export const NOT_PLACED_ORDER_STATUSES = ["canceled", "cancelled", "draft"]
+
+// What the dashboard counts as needing attention. The store assistant uses
+// the same definitions so its answers match the home page.
+export const isPlacedOrder = ({ status }: Pick<OrderStatusSource, "status">) =>
+  !NOT_PLACED_ORDER_STATUSES.includes(status)
+
+export const needsFulfillment = (order: OrderStatusSource) =>
+  isPlacedOrder(order) &&
+  ["not_fulfilled", "partially_fulfilled"].includes(
+    order.fulfillment_status ?? "not_fulfilled",
+  )
+
+export const needsPaymentReview = (order: OrderStatusSource) =>
+  isPlacedOrder(order) &&
+  [
+    "not_paid",
+    "awaiting",
+    "requires_action",
+    "authorized",
+    "partially_captured",
+  ].includes(order.payment_status ?? "not_paid")
 
 const numericTotal = (order: MerchantHomeOrderSource) =>
   Number(order.total ?? 0)
@@ -254,21 +279,8 @@ export const buildMerchantHome = ({
       }).length
     )
   }, 0)
-  const activeAttentionOrders = attentionOrders.filter(isPlacedOrder)
-  const fulfillmentAttention = activeAttentionOrders.filter((order) =>
-    ["not_fulfilled", "partially_fulfilled"].includes(
-      order.fulfillment_status ?? "not_fulfilled",
-    ),
-  ).length
-  const paymentAttention = activeAttentionOrders.filter((order) =>
-    [
-      "not_paid",
-      "awaiting",
-      "requires_action",
-      "authorized",
-      "partially_captured",
-    ].includes(order.payment_status ?? "not_paid"),
-  ).length
+  const fulfillmentAttention = attentionOrders.filter(needsFulfillment).length
+  const paymentAttention = attentionOrders.filter(needsPaymentReview).length
   const draftProducts = products.filter(({ status }) =>
     ["draft", "proposed", "rejected"].includes(status),
   ).length

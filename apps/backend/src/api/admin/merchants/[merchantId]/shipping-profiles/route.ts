@@ -1,4 +1,4 @@
-import type { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
+import type { AuthenticatedMedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 
 import { requireMerchantRole } from "../../../../utils/merchant-request-context"
 import { getMerchantRouteScope } from "../../../../utils/merchant-route-scope"
@@ -10,7 +10,7 @@ type CreateShippingProfilesBody = {
   shipping_profiles: Array<{ name: string; type: string }>
 }
 
-export const GET = async (request: MedusaRequest, response: MedusaResponse) => {
+export const GET = async (request: AuthenticatedMedusaRequest, response: MedusaResponse) => {
   const { result } = await retrieveMerchantManagementWorkflow(request.scope).run({
     input: getMerchantRouteScope(request),
   })
@@ -21,7 +21,7 @@ export const GET = async (request: MedusaRequest, response: MedusaResponse) => {
 }
 
 export const POST = async (
-  request: MedusaRequest<CreateShippingProfilesBody>,
+  request: AuthenticatedMedusaRequest<CreateShippingProfilesBody>,
   response: MedusaResponse
 ) => {
   requireMerchantRole(request, ["owner", "admin"])

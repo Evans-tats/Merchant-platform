@@ -53,12 +53,19 @@ const toolLabels: Record<string, string> = {
   get_product_performance: "Checked product sales",
   find_products: "Searched products",
   get_product_details: "Read product details",
+  list_orders: "Checked orders",
+  get_order_details: "Read order details",
+  list_customers: "Checked customers",
+  list_customer_segments: "Checked customer segments",
+  get_catalog_structure: "Checked categories and collections",
+  list_delivery_methods: "Checked delivery methods",
+  get_recent_activity: "Checked recent activity",
 }
 
 const suggestions = [
+  "What needs my attention today?",
   "How is my business doing this week?",
-  "What's almost out of stock?",
-  "Which products sell best?",
+  "Who are my repeat customers?",
   "Draft an Instagram post for my best seller",
 ]
 

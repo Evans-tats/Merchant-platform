@@ -1,5 +1,5 @@
 import type {
-  MedusaRequest,
+  AuthenticatedMedusaRequest,
   MedusaResponse,
 } from "@medusajs/framework/http"
 
@@ -14,7 +14,7 @@ import {
 type CreateAddressBody = { address: MerchantCustomerAddressInput }
 
 export const POST = async (
-  request: MedusaRequest<CreateAddressBody>,
+  request: AuthenticatedMedusaRequest<CreateAddressBody>,
   response: MedusaResponse
 ) => {
   requireMerchantRole(request, ["owner", "admin"])

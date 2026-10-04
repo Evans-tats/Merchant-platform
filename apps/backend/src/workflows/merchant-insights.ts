@@ -1,6 +1,7 @@
 import {
   ContainerRegistrationKeys,
   MedusaError,
+  OrderStatus,
 } from "@medusajs/framework/utils"
 import {
   createStep,
@@ -12,12 +13,14 @@ import {
 import {
   getOrderDetailWorkflow,
   getOrdersListWorkflow,
+  useQueryGraphStep,
 } from "@medusajs/medusa/core-flows"
 
 import { MERCHANT_MODULE } from "../modules/merchant"
 import MerchantModuleService from "../modules/merchant/service"
 import {
   buildMerchantHome,
+  NOT_PLACED_ORDER_STATUSES,
   resolveMerchantHomePeriod,
   type MerchantHomeOrderSource,
   type MerchantHomeRange,
@@ -52,8 +55,12 @@ export const merchantOrderDetailFields = [
   "updated_at",
   "items.*",
   "items.detail.*",
-  "items.variant.*",
-  "items.variant.product.*",
+  "items.variant.id",
+  "items.variant.title",
+  "items.variant.sku",
+  "items.variant.product.id",
+  "items.variant.product.title",
+  "items.variant.product.thumbnail",
   "shipping_address.*",
   "billing_address.*",
   "shipping_methods.*",
@@ -72,6 +79,67 @@ export const merchantOrderDetailFields = [
   "customer.company_name",
   "customer.has_account",
 ]
+
+export const merchantOrderListFields = [
+  "id",
+  "display_id",
+  "status",
+  "email",
+  "customer_id",
+  "currency_code",
+  "total",
+  "created_at",
+  "customer.first_name",
+  "customer.last_name",
+  "customer.email",
+  "items.title",
+  "items.product_title",
+  "items.variant_title",
+  "items.quantity",
+  "fulfillments.id",
+  "fulfillments.shipped_at",
+  "fulfillments.delivered_at",
+  "fulfillments.canceled_at",
+]
+
+export type MerchantOrderListItem = {
+  id: string
+  display_id?: number | null
+  status: string
+  fulfillment_status?: string | null
+  payment_status?: string | null
+  email?: string | null
+  customer_id?: string | null
+  currency_code?: string | null
+  total?: number | null
+  created_at?: Date | string | null
+  customer?: {
+    first_name?: string | null
+    last_name?: string | null
+    email?: string | null
+  } | null
+  items?: Array<{
+    title?: string | null
+    product_title?: string | null
+    variant_title?: string | null
+    quantity?: number | null
+  }>
+  fulfillments?: Array<{
+    id: string
+    shipped_at?: Date | string | null
+    delivered_at?: Date | string | null
+    canceled_at?: Date | string | null
+  }>
+}
+
+export type ListMerchantOrdersInput = MerchantScopeInput & {
+  display_id?: number
+  // Leaves out canceled and draft orders.
+  placed_only?: boolean
+  // Leave both out for every order.
+  limit?: number
+  offset?: number
+}
 
 type MerchantInventoryGraph = {
   stock_locations?: Array<Record<string, unknown> & { id: string }>
@@ -218,7 +286,11 @@ const retrieveMerchantReportsStep = createStep(
         "orders.customer_id",
         "orders.email",
         "orders.created_at",
-        "orders.items.*",
+        "orders.items.product_id",
+        "orders.items.product_title",
+        "orders.items.title",
+        "orders.items.quantity",
+        "orders.items.total",
         "products.id",
         "products.title",
         "products.status",
@@ -292,49 +364,29 @@ const retrieveMerchantReportsStep = createStep(
   },
 )
 
-const retrieveMerchantHomeStoreStep = createStep(
-  "retrieve-merchant-home-store",
-  async (input: { merchant_id: ResolvedMerchantId }, { container }) => {
-    const query = container.resolve(ContainerRegistrationKeys.QUERY)
-    const { data } = await query.graph({
-      entity: "merchant",
-      fields: [
-        "id",
-        "name",
-        "slug",
-        "status",
-        "domains.hostname",
-        "domains.status",
-        "domains.is_primary",
-        "payment_configs.provider",
-        "payment_configs.mode",
-        "payment_configs.status",
-        "products.id",
-        "products.title",
-        "products.status",
-        "products.thumbnail",
-        "products.variants.id",
-        "products.variants.manage_inventory",
-        "products.variants.inventory.location_levels.available_quantity",
-        "products.variants.inventory.location_levels.stocked_quantity",
-        "products.variants.inventory.location_levels.reserved_quantity",
-        "stock_locations.id",
-        "orders.id",
-      ],
-      filters: { id: input.merchant_id },
-    })
-    const merchant = (data as unknown as MerchantHomeStoreGraph[])[0]
-
-    if (!merchant) {
-      throw new MedusaError(
-        MedusaError.Types.NOT_FOUND,
-        "Merchant workspace not found",
-      )
-    }
-
-    return new StepResponse(merchant)
-  },
-)
+const merchantHomeStoreFields = [
+  "id",
+  "name",
+  "slug",
+  "status",
+  "domains.hostname",
+  "domains.status",
+  "domains.is_primary",
+  "payment_configs.provider",
+  "payment_configs.mode",
+  "payment_configs.status",
+  "products.id",
+  "products.title",
+  "products.status",
+  "products.thumbnail",
+  "products.variants.id",
+  "products.variants.manage_inventory",
+  "products.variants.inventory.location_levels.available_quantity",
+  "products.variants.inventory.location_levels.stocked_quantity",
+  "products.variants.inventory.location_levels.reserved_quantity",
+  "stock_locations.id",
+  "orders.id",
+]
 
 const buildMerchantHomeDataStep = createStep(
   "build-merchant-home-data",
@@ -361,30 +413,26 @@ const buildMerchantHomeDataStep = createStep(
 
 const listMerchantActivityStep = createStep(
   "list-merchant-activity",
-  async (input: { merchant_id: ResolvedMerchantId }, { container }) => {
+  async (
+    input: { merchant_id: ResolvedMerchantId; since?: string; limit?: number },
+    { container },
+  ) => {
     const merchantService =
       container.resolve<MerchantModuleService>(MERCHANT_MODULE)
+    const filters = {
+      merchant_id: input.merchant_id,
+      ...(input.since ? { created_at: { $gte: new Date(input.since) } } : {}),
+    }
+    const config = {
+      take: input.limit ?? 200,
+      order: { created_at: "DESC" as const },
+    }
     const [activities, notifications] = await Promise.all([
-      merchantService.listMerchantActivities({
-        merchant_id: input.merchant_id,
-      }),
-      merchantService.listMerchantNotifications({
-        merchant_id: input.merchant_id,
-      }),
+      merchantService.listMerchantActivities(filters, config),
+      merchantService.listMerchantNotifications(filters, config),
     ])
-    const newestFirst = <T extends { created_at?: Date | string }>(
-      values: T[],
-    ) =>
-      values.sort(
-        (left, right) =>
-          new Date(right.created_at ?? 0).getTime() -
-          new Date(left.created_at ?? 0).getTime(),
-      )
 
-    return new StepResponse({
-      activities: newestFirst(activities).slice(0, 200),
-      notifications: newestFirst(notifications).slice(0, 200),
-    })
+    return new StepResponse({ activities, notifications })
   },
 )
 
@@ -486,6 +534,69 @@ export const retrieveMerchantOrderWorkflow = createWorkflow(
   },
 )
 
+// Only the merchant's orders, newest first, paged in the database. Payment and
+// fulfillment status come from Medusa's order list workflow.
+export const listMerchantOrdersWorkflow = createWorkflow(
+  "list-merchant-orders",
+  function (input: ListMerchantOrdersInput) {
+    const scope = validateMerchantScopeStep(input)
+    const { data: merchants } = useQueryGraphStep({
+      entity: "merchant",
+      fields: ["orders.id"],
+      filters: { id: scope.merchant_id },
+    })
+    const variables = transform({ input, merchants }, ({ input, merchants }) => {
+      const merchant = merchants[0] as { orders?: Array<{ id: string }> }
+      const orderIds = (merchant?.orders ?? []).map(({ id }) => id)
+
+      return {
+        filters: {
+          // An empty id filter must match no orders, never every order.
+          id: orderIds.length ? orderIds : ["order_none"],
+          ...(input.display_id === undefined
+            ? {}
+            : { display_id: input.display_id }),
+          // Only Medusa's own status values: the column is a Postgres enum and
+          // rejects other spellings such as "cancelled".
+          ...(input.placed_only
+            ? {
+                status: {
+                  $nin: NOT_PLACED_ORDER_STATUSES.filter((status) =>
+                    Object.values<string>(OrderStatus).includes(status)
+                  ),
+                },
+              }
+            : {}),
+        },
+        ...(input.limit === undefined
+          ? {}
+          : { skip: input.offset ?? 0, take: input.limit }),
+        order: { created_at: "DESC" },
+      }
+    })
+    const orders = getOrdersListWorkflow.runAsStep({
+      input: { fields: merchantOrderListFields, variables },
+    })
+    const result = transform({ input, orders }, ({ input, orders }) => {
+      const page = orders as unknown as
+        | MerchantOrderListItem[]
+        | { rows: MerchantOrderListItem[]; metadata?: { count?: number } }
+      const rows = Array.isArray(page) ? page : page.rows
+
+      return {
+        orders: rows,
+        count: Array.isArray(page)
+          ? rows.length
+          : (page.metadata?.count ?? rows.length),
+        limit: input.limit ?? null,
+        offset: input.offset ?? 0,
+      }
+    })
+
+    return new WorkflowResponse(result)
+  },
+)
+
 export const listMerchantInventoryWorkflow = createWorkflow(
   "list-merchant-inventory",
   function (input: MerchantScopeInput) {
@@ -514,9 +625,16 @@ export const retrieveMerchantHomeWorkflow = createWorkflow(
   "retrieve-merchant-home",
   function (input: MerchantScopeInput & { range: MerchantHomeRange }) {
     const scope = validateMerchantScopeStep(input)
-    const merchant = retrieveMerchantHomeStoreStep({
-      merchant_id: scope.merchant_id,
+    const { data: merchants } = useQueryGraphStep({
+      entity: "merchant",
+      fields: merchantHomeStoreFields,
+      filters: { id: scope.merchant_id },
+      options: { throwIfKeyNotFound: true },
     })
+    const merchant = transform(
+      { merchants },
+      ({ merchants }) => merchants[0] as unknown as MerchantHomeStoreGraph,
+    )
     const orderIds = transform({ merchant }, ({ merchant }) =>
       (merchant.orders ?? []).map(({ id }) => id),
     )
@@ -556,9 +674,13 @@ export const retrieveMerchantHomeWorkflow = createWorkflow(
 
 export const listMerchantActivityWorkflow = createWorkflow(
   "list-merchant-activity",
-  function (input: MerchantScopeInput) {
+  function (input: MerchantScopeInput & { since?: string; limit?: number }) {
     const scope = validateMerchantScopeStep(input)
-    const result = listMerchantActivityStep({ merchant_id: scope.merchant_id })
+    const result = listMerchantActivityStep({
+      merchant_id: scope.merchant_id,
+      since: input.since,
+      limit: input.limit,
+    })
 
     return new WorkflowResponse(result)
   },

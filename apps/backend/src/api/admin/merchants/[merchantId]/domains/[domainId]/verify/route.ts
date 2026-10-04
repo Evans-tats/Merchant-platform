@@ -1,5 +1,5 @@
 import type {
-  MedusaRequest,
+  AuthenticatedMedusaRequest,
   MedusaResponse,
 } from "@medusajs/framework/http"
 
@@ -9,7 +9,7 @@ import { verifyMerchantDomainWorkflow } from "../../../../../../../workflows/mer
 import { recordMerchantActivity } from "../../../../../../utils/record-merchant-activity"
 
 export const POST = async (
-  request: MedusaRequest,
+  request: AuthenticatedMedusaRequest,
   response: MedusaResponse
 ) => {
   requireMerchantRole(request, ["owner", "admin"])

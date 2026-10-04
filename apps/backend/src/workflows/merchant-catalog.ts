@@ -23,6 +23,7 @@ import {
   createRemoteLinkStep,
   uploadFilesWorkflow,
   updateProductsWorkflow,
+  useQueryGraphStep,
 } from "@medusajs/medusa/core-flows"
 
 import { MERCHANT_MODULE } from "../modules/merchant"
@@ -311,54 +312,51 @@ const listMerchantProductsStep = createStep(
   }
 )
 
-const retrieveMerchantProductStep = createStep(
-  "retrieve-merchant-product",
-  async (input: { product_id: string }, { container }) => {
-    const query = container.resolve(ContainerRegistrationKeys.QUERY)
-    const { data } = await query.graph({
-      entity: "product",
-      fields: [
-        "id",
-        "title",
-        "subtitle",
-        "description",
-        "handle",
-        "status",
-        "thumbnail",
-        "discountable",
-        "collection_id",
-        "collection.id",
-        "collection.title",
-        "categories.id",
-        "categories.name",
-        "images.*",
-        "options.*",
-        "options.values.*",
-        "variants.id",
-        "variants.title",
-        "variants.sku",
-        "variants.manage_inventory",
-        "variants.allow_backorder",
-        "variants.prices.*",
-        "variants.options.*",
-        "variants.inventory.id",
-        "variants.inventory.location_levels.*",
-        "shipping_profile.id",
-        "shipping_profile.name",
-        "sales_channels.id",
-        "created_at",
-        "updated_at",
-      ],
-      filters: { id: input.product_id },
-    })
-
-    if (!data[0]) {
-      throw new MedusaError(MedusaError.Types.NOT_FOUND, "Product not found")
-    }
-
-    return new StepResponse(data[0])
-  }
-)
+const merchantProductDetailFields = [
+  "id",
+  "title",
+  "subtitle",
+  "description",
+  "handle",
+  "status",
+  "thumbnail",
+  "discountable",
+  "collection_id",
+  "collection.id",
+  "collection.title",
+  "categories.id",
+  "categories.name",
+  "images.id",
+  "images.url",
+  "images.rank",
+  "options.id",
+  "options.title",
+  "options.values.id",
+  "options.values.value",
+  "variants.id",
+  "variants.title",
+  "variants.sku",
+  "variants.manage_inventory",
+  "variants.allow_backorder",
+  "variants.prices.id",
+  "variants.prices.amount",
+  "variants.prices.currency_code",
+  "variants.options.id",
+  "variants.options.value",
+  "variants.options.option_id",
+  "variants.inventory.id",
+  "variants.inventory.location_levels.id",
+  "variants.inventory.location_levels.location_id",
+  "variants.inventory.location_levels.stocked_quantity",
+  "variants.inventory.location_levels.reserved_quantity",
+  "variants.inventory.location_levels.incoming_quantity",
+  "variants.inventory.location_levels.available_quantity",
+  "shipping_profile.id",
+  "shipping_profile.name",
+  "sales_channels.id",
+  "created_at",
+  "updated_at",
+]
 
 const validateMerchantCatalogMutationAccessStep = createStep(
   "validate-merchant-catalog-mutation-access",
@@ -904,9 +902,13 @@ export const retrieveMerchantProductWorkflow = createWorkflow(
       resource_type: "product",
       resource_id: input.product_id,
     })
-    const product = retrieveMerchantProductStep({
-      product_id: input.product_id,
+    const { data: products } = useQueryGraphStep({
+      entity: "product",
+      fields: merchantProductDetailFields,
+      filters: { id: input.product_id },
+      options: { throwIfKeyNotFound: true },
     })
+    const product = transform({ products }, ({ products }) => products[0])
 
     return new WorkflowResponse(product)
   }

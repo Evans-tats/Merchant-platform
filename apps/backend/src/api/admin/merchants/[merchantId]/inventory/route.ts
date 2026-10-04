@@ -1,6 +1,6 @@
 import type { InventoryTypes } from "@medusajs/framework/types"
 import type {
-  MedusaRequest,
+  AuthenticatedMedusaRequest,
   MedusaResponse,
 } from "@medusajs/framework/http"
 
@@ -17,7 +17,7 @@ type AdjustInventoryBody = {
 }
 
 export const GET = async (
-  request: MedusaRequest,
+  request: AuthenticatedMedusaRequest,
   response: MedusaResponse
 ) => {
   const { result } = await listMerchantInventoryWorkflow(
@@ -28,7 +28,7 @@ export const GET = async (
 }
 
 export const POST = async (
-  request: MedusaRequest<AdjustInventoryBody>,
+  request: AuthenticatedMedusaRequest<AdjustInventoryBody>,
   response: MedusaResponse
 ) => {
   const { result } = await adjustMerchantInventoryWorkflow(

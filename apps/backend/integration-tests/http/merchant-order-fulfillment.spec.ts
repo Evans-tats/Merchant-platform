@@ -177,7 +177,7 @@ medusaIntegrationTestRunner({
             filters: { id: order.id },
           })
 
-          return createdOrders[0] as {
+          return createdOrders[0] as unknown as {
             id: string
             items: Array<{
               id: string

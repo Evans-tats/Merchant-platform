@@ -1,5 +1,5 @@
 import type {
-  MedusaRequest,
+  AuthenticatedMedusaRequest,
   MedusaResponse,
 } from "@medusajs/framework/http"
 
@@ -14,7 +14,7 @@ type PublishMerchantThemeBody = {
 }
 
 export const GET = async (
-  request: MedusaRequest,
+  request: AuthenticatedMedusaRequest,
   response: MedusaResponse
 ) => {
   const { result } = await retrieveMerchantManagementWorkflow(
@@ -29,7 +29,7 @@ export const GET = async (
 }
 
 export const POST = async (
-  request: MedusaRequest<PublishMerchantThemeBody>,
+  request: AuthenticatedMedusaRequest<PublishMerchantThemeBody>,
   response: MedusaResponse
 ) => {
   requireMerchantRole(request, ["owner", "admin"])

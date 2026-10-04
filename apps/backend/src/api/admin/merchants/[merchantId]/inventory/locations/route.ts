@@ -1,6 +1,6 @@
 import type { CreateStockLocationInput } from "@medusajs/framework/types"
 import type {
-  MedusaRequest,
+  AuthenticatedMedusaRequest,
   MedusaResponse,
 } from "@medusajs/framework/http"
 
@@ -14,7 +14,7 @@ type CreateLocationsBody = {
 }
 
 export const POST = async (
-  request: MedusaRequest<CreateLocationsBody>,
+  request: AuthenticatedMedusaRequest<CreateLocationsBody>,
   response: MedusaResponse
 ) => {
   requireMerchantRole(request, ["owner", "admin"])

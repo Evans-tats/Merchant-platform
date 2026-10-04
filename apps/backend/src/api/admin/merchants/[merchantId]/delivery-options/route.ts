@@ -1,5 +1,5 @@
 import type {
-  MedusaRequest,
+  AuthenticatedMedusaRequest,
   MedusaResponse,
 } from "@medusajs/framework/http"
 
@@ -18,7 +18,7 @@ type CreateDeliveryMethodBody = Omit<
 >
 
 export const GET = async (
-  request: MedusaRequest,
+  request: AuthenticatedMedusaRequest,
   response: MedusaResponse
 ) => {
   const { result } = await listMerchantDeliveryMethodsWorkflow(
@@ -31,7 +31,7 @@ export const GET = async (
 }
 
 export const POST = async (
-  request: MedusaRequest<CreateDeliveryMethodBody>,
+  request: AuthenticatedMedusaRequest<CreateDeliveryMethodBody>,
   response: MedusaResponse
 ) => {
   requireMerchantRole(request, ["owner", "admin"])

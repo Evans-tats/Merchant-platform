@@ -30,7 +30,8 @@
     "test:integration:modules": "node ./scripts/run-jest.js integration:modules --silent=false --runInBand --forceExit",
     "test:integration:modules:local": "node ./scripts/run-integration-with-postgres.js integration:modules --silent=false --runInBand --forceExit",
     "test:db:up": "docker compose -p merchant-platform-tests -f ../../docker-compose.test.yml up -d --wait test-postgres",
-    "test:db:down": "docker compose -p merchant-platform-tests -f ../../docker-compose.test.yml down --volumes --remove-orphans"
+    "test:db:down": "docker compose -p merchant-platform-tests -f ../../docker-compose.test.yml down --volumes --remove-orphans",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p src/admin/tsconfig.json"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
