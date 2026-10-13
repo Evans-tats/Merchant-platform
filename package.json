@@ -14,6 +14,7 @@
     "backend:seed": "turbo seed --filter=@dtc/backend",
     "backend:dev": "turbo dev --filter=@dtc/backend",
     "storefront:dev": "turbo dev --filter=@dtc/storefront",
+    "seed:amani": "npm --workspace @dtc/backend run seed:amani",
     "seed:demo-merchants": "npm --workspace @dtc/backend run seed:demo-merchants"
   },
   "pnpm": {

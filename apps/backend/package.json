@@ -17,6 +17,7 @@
     "start": "medusa start",
     "dev": "medusa develop",
     "configure:kenya": "medusa exec ./src/scripts/configure-kenya-market.ts",
+    "seed:amani": "medusa exec ./src/scripts/seed-amani-demo.ts",
     "seed:demo-merchants": "medusa exec ./src/scripts/seed-demo-merchants.ts",
     "seed:mpesa-registry": "medusa exec ./src/scripts/seed-mpesa-registry.ts",
     "onboard:mpesa": "medusa exec ./src/scripts/mpesa-onboarding-cli.ts",
